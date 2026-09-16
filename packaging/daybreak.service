@@ -1,0 +1,36 @@
+[Unit]
+Description=Daybreak wake-up service
+Wants=network-online.target
+After=network-online.target time-sync.target docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=daybreak
+Group=daybreak
+WorkingDirectory=/var/lib/daybreak
+ExecStart=/opt/daybreak/current/venv/bin/python -B -m daybreak --daemon
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+StateDirectory=daybreak
+StateDirectoryMode=0700
+RuntimeDirectory=daybreak
+RuntimeDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/daybreak /run/daybreak
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

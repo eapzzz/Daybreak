@@ -1,0 +1,46 @@
+# Daybreak — uruchomienie
+
+## Repo
+
+Rozpakuj archiwum. Zawartość folderu `daybreak` wrzuć do swojego repo GitHub
+(`pyproject.toml`, `install.sh`, `src` i pozostałe pliki mają być w katalogu głównym).
+Ukryte `.gitignore` i `.github` również należą do repo. Nie dodawaj danych serwera.
+
+## Serwer
+
+Przez SSH na hoście (nie w kontenerze):
+
+```bash
+git clone TWOJ_ADRES_REPO daybreak
+cd daybreak
+sudo bash install.sh
+sudo daybreak
+```
+
+Instalator zastępuje wcześniejszą usługę Daybreak. Zachowuje jej stare pliki,
+ale nowa aplikacja zaczyna od własnej, pustej konfiguracji. Przy pierwszej
+instalacji codzienna pobudka nie jest jeszcze włączona.
+
+## Dalej tylko panel
+
+1. **Connection**: URL i token → **Save connection** → **Choose phone**.
+   **Pair existing QR** → skan dotychczasowego QR → **Use captured QR**.
+2. **Home Wi-Fi**: **Choose SSID sensor**, **Choose BSSID sensor** →
+   **Use current Wi-Fi**, kiedy telefon jest w domu. Status ma być **Home**.
+3. **Diagnostics**: **Run rolling test** → sprawdź realne dzwonienie i skan →
+   **Confirm test passed**. Potem **Run Wi-Fi test** i potwierdzenie zachowania.
+4. **System**: **Enable daily routine** oraz **Enable autostart**.
+
+**Next wake-up** ustawia jeden dzień, **Routine** — regułę tygodniową.
+Godzina 07:10 oznacza start o 07:10 i koniec o 08:30; przygotowanie zaczyna się
+o 07:09:50. Pełny podgląd jest dostępny przed zapisaniem.
+
+Kolejne wersje wypychasz ze swojego komputera na GitHub, a na serwerze wybierasz
+**System → Pull & deploy**. URL, token, QR, sieci i historia zostają na serwerze.
+Nie musisz ponownie edytować plików ani wywoływać `systemctl`.
+
+Nawigacja: **F1–F9**, **Tab**, **Shift-Tab**, **Enter**, **Esc**, mysz i przewijanie.
+**Ctrl-Q** zamyka panel; usługa działa dalej. Zalecany terminal co najmniej 100×30.
+
+Pozostaw w Companion **Persistent Connection → Always**. Stara automatyzacja
+budzenia w HA ma pozostać wyłączona. Szczegóły i wymagania: [README.md](README.md).
