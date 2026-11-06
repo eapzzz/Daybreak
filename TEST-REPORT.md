@@ -83,7 +83,7 @@ arming the routine. API acceptance is not physical-phone confirmation.
 
 ## NFC migration update — 2026-11-06 (1.1.0)
 
-Local verification on Linux / Python 3.14.0, using isolated dependencies:
+Local verification on Linux / Python 3.14.8, using isolated dependencies:
 
 ```text
 python -m pytest -q
