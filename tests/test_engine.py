@@ -267,3 +267,28 @@ async def test_old_completed_test_cannot_confirm_a_replacement_tag(engine):
     await e.configure({'qr_tag_id':'new-nfc'})
     assert e.test_id is None and e.db.meta('active_test') is None
     with pytest.raises(ValueError): e.accept_test()
+
+async def test_evening_seed_is_not_set_again_before_first_ring_or_after_restart(engine):
+    e,c,h=engine; c.now=c.now.replace(hour=22,minute=0,second=0); await e.tick()
+    assert len(creates(h))==1 and not volumes(h)
+    c.now=(c.now+timedelta(days=1)).replace(hour=5,minute=54,second=50)
+    e=Engine(e.files,e.db,h,c); await e.tick()
+    assert len(creates(h))==1 and len(volumes(h))==2
+    e=Engine(e.files,e.db,h,c); await e.tick()
+    assert len(creates(h))==1 and len(volumes(h))==2
+    await qr(e); await e.tick()
+    assert len(dismisses(h))==1 and not e.db.session('wake:2026-09-18')['needs_normal']
+
+async def test_failed_seed_sound_preparation_retries_without_setting_alarm_again(engine):
+    e,c,h=engine; c.now=c.now.replace(hour=22,minute=0,second=0); await e.tick()
+    c.now=(c.now+timedelta(days=1)).replace(hour=5,minute=54,second=50)
+    h.fail=True; await e.tick(); assert len(creates(h))==1
+    h.fail=False;c.now+=timedelta(seconds=3);await e.tick()
+    assert len(creates(h))==1 and any(a['prepared'] for a in e.db.alarms())
+
+async def test_unacknowledged_evening_seed_is_retried_before_first_ring(engine):
+    e,c,h=engine; c.now=c.now.replace(hour=22,minute=0,second=0);h.fail=True;await e.tick()
+    assert len(creates(h))==1
+    c.now=(c.now+timedelta(days=1)).replace(hour=5,minute=54,second=50)
+    h.fail=False;await e.tick()
+    assert len(creates(h))==2 and len(volumes(h))==2

@@ -153,11 +153,18 @@ class Engine:
         revision=self.revision; label=self._label(sid,due)
         if self.now().timestamp()<self.retry.get(label,0) or not self._allowed(sid,due,revision): return
         cfg=self.cfg
-        self.db.record_alarm(label,sid,due,cfg,seed)
+        previous=self.db.alarm(label)
+        # Re-setting the evening alarm can make Clock treat it as a reused
+        # user alarm, which Android explicitly allows it to retain after use.
+        # Keep the acknowledged seed and only prepare its sound in the morning.
+        reuse_seed=bool(not seed and previous and previous['seed'] and previous['status']=='sent'
+                        and previous['package']==cfg.alarm_package and previous['notify_service']==cfg.notify_service)
+        if not reuse_seed: self.db.record_alarm(label,sid,due,cfg,seed)
         self.retry[label]=self.now().timestamp()+3
         try:
             remaining=due.timestamp()-self.now().timestamp()-2
-            await self.ha.notify(cfg.notify_service,alarm_payload(due,label,cfg.alarm_package),timeout=min(3,max(.2,remaining)))
+            if not reuse_seed:
+                await self.ha.notify(cfg.notify_service,alarm_payload(due,label,cfg.alarm_package),timeout=min(3,max(.2,remaining)))
             if not seed:
                 for payload in (command('command_ringer_mode',command='normal'),
                                 command('command_volume_level',media_stream='alarm_stream',command=cfg.loud_alarm),

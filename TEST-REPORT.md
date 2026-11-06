@@ -103,3 +103,11 @@ These local tests use synthetic identifiers and fake HA/phone transports. Physic
 NTAG213 reading, alarm cancellation, Android lock-screen behavior and the first
 real morning still require the user's phone. The earlier verification record
 above describes 1.0 and is retained as historical evidence.
+
+## Evening alarm lifecycle — 2026-11-06 (1.1.1)
+
+`python -m pytest -q`: **112 passed in 6.02s** (same isolated local environment).
+New tests cover evening-to-morning preparation without a second SET_ALARM,
+restart persistence, NFC cleanup, sound-command retry without re-creation, and
+retrying an evening creation that was not acknowledged. These tests verify the
+commands and durable ledger, not the private storage of the phone's Clock app.

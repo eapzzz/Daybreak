@@ -199,6 +199,25 @@ times are not replayed. Nonexistent DST local times move to the first valid loca
 minute; an ambiguous autumn time uses its first occurrence. The console preview
 is the source of truth for the resulting wall-clock plan.
 
+## Clock entries and cleanup
+
+Alarms are one-shot and created with Android's `EXTRA_SKIP_UI=true`, which asks
+Clock to remove a newly-created alarm after dismissal. Actual removal depends on
+the Clock implementation; HA accepting a dismissal does not confirm deletion.
+Starting with 1.1.1, a successfully acknowledged evening alarm is not set again
+before its first ring. Daybreak only prepares sound at T−10 seconds. This avoids
+turning it into an identical reused alarm, which Android permits Clock to retain.
+An unacknowledged creation is still retried, and sound-preparation retries do not
+re-create an acknowledged evening alarm.
+
+The unique `Daybreak_…` label is currently the ownership identifier used for
+scoped dismissal. Blank labels or time-only cleanup cannot safely distinguish a
+Daybreak alarm from a personal alarm at the same time. The standard Android
+AlarmClock interface exposes dismissal, not a general API to list and delete old
+Clock entries. Older retained entries therefore need separate, scoped cleanup;
+clearing Clock's app data would also erase personal alarms and settings. See the
+[Android AlarmClock contract](https://developer.android.com/reference/android/provider/AlarmClock).
+
 ## Home Wi-Fi behavior
 
 Daybreak observes authenticated HA sensor states and network-change events,
