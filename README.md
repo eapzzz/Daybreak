@@ -14,7 +14,7 @@ Assistant automation. Your normal Home Assistant controls remain separate.
 - Exact first-ring times. No hidden five-minute offset.
 - At least one hour, rounded **up** to the next half-hour: **07:10 → 08:30**.
 - Dense first phase, then spaced alarms; a final alarm at the exact end.
-- Alarm creation and loud-volume commands begin **10 seconds before each ring**.
+- Alarm creation and loud-volume commands begin **1 second before each ring**.
 - **Home Wi-Fi only:** both the reported SSID and BSSID must match your approved
   networks. Away/Unknown inhibit new wake-up commands and queue cleanup.
 - The same Wi-Fi rule covers the optional evening alarm.
@@ -170,7 +170,7 @@ Default settings:
 | Round end up to | 30-minute boundary |
 | Dense phase | First 15 minutes, every minute |
 | Later phase | Every 3 minutes |
-| Preparation lead | 10 seconds |
+| Preparation lead | 1 second |
 | Daytime volume | 15 minutes after the end, or after tag confirmation |
 | Evening preparation | 22:00, one alarm at the next day's exact first-ring time |
 | Wake-up volume | Alarm 7, ring 7 |
@@ -178,6 +178,13 @@ Default settings:
 | Time zone | Europe/Warsaw |
 
 **05:55 → 07:00**, **07:00 → 08:00**, **07:10 → 08:30**, **07:30 → 08:30**.
+The preparation lead is configurable from 1 to 45 seconds. Existing saved
+settings retain their value until changed in **F3 · Routine**. One second is a
+server dispatch window, not a guaranteed phone-delivery time: REST, Companion and
+Clock must process the commands within it. Requests use the remaining time budget;
+Daybreak stops sending wake-up commands at the deadline rather than replaying them
+late. A new timing value needs a real phone test before relying on it.
+
 The first ring is exactly the entered time. End rounding is applied *after*
 adding the minimum duration. The final end alarm is always included. Dense phase
 includes the first ring and the ring at +15 minutes; the later phase starts at
@@ -205,7 +212,7 @@ Alarms are one-shot and created with Android's `EXTRA_SKIP_UI=true`, which asks
 Clock to remove a newly-created alarm after dismissal. Actual removal depends on
 the Clock implementation; HA accepting a dismissal does not confirm deletion.
 Starting with 1.1.1, a successfully acknowledged evening alarm is not set again
-before its first ring. Daybreak only prepares sound at T−10 seconds. This avoids
+before its first ring. Daybreak only prepares sound at the configured preparation time. This avoids
 turning it into an identical reused alarm, which Android permits Clock to retain.
 An unacknowledged creation is still retried, and sound-preparation retries do not
 re-create an acknowledged evening alarm.

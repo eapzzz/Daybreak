@@ -29,9 +29,9 @@ async def test_default_is_unarmed(tmp_path):
 
 async def test_bad_settings_have_structured_error(tmp_path):
     async with api(tmp_path) as (c,e):
-        async with c.post('http://localhost/config',json={'settings':{'lead_seconds':1}}) as r:
+        async with c.post('http://localhost/config',json={'settings':{'lead_seconds':0}}) as r:
             assert r.status==400 and 'error' in await r.json()
-        assert e.cfg.lead_seconds==10
+        assert e.cfg.lead_seconds==1
 
 async def test_action_allowlist(tmp_path):
     async with api(tmp_path) as (c,e):

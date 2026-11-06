@@ -288,7 +288,7 @@ class Console:
                 else 'Choose “Pair NFC tag”, then hold your phone near the bathroom tag.')
     def _test_card(self):
         test=self.status_data.get('test')
-        if not test: return '  No test in progress.\n  The rolling test prepares 3 alarms at 10 seconds before each ring.'
+        if not test: return f'  No test in progress.\n  The rolling test prepares 3 alarms at {self.cfg.lead_seconds} second(s) before each ring.'
         p=test['plan']; lines=[f"  {'COMPLETE' if test['completed'] else 'RUNNING'}  ·  {test['kind']}  ·  {test.get('reason') or 'Waiting for phone / tag'}",'']
         for a in p['alarms']: lines.append(f"  Prepare {stamp(a['prepare'],True)}   →   Ring {stamp(a['ring'],True)}")
         lines.extend(['',f"  Cleanup pending: {self.status_data.get('pending_cleanup',0)}",
@@ -430,7 +430,7 @@ class Console:
         if await self.confirm('Real phone test','This creates three real alarms, a minute apart, and changes phone volume.\nLet two alarms ring, then hold your phone near the bathroom NFC tag.\nThe next real morning is not marked complete.'):
             await self.control.action('start_test'); self.goto('diagnostics'); self.toast('Rolling test started. Watch the live timeline.')
     async def start_network_test(self):
-        if await self.confirm('Home Wi-Fi test','A real test alarm is prepared 10 seconds before ringing.\nAfter it is prepared, disconnect the phone from home Wi-Fi.\nVerify Daybreak cancels its alarm and restores daytime volume.'):
+        if await self.confirm('Home Wi-Fi test',f'A real test alarm is prepared {self.cfg.lead_seconds} second(s) before ringing.\nAfter it is prepared, disconnect the phone from home Wi-Fi.\nVerify Daybreak cancels its alarm and restores daytime volume.'):
             await self.control.action('start_network_test'); self.goto('diagnostics'); self.toast('Wi-Fi test started.')
     async def confirm_test(self):
         if await self.confirm('Confirm actual phone behavior','Did the phone behave as expected, with the prepared alarm stopped\nand no remaining test alarm or incorrect volume?'):

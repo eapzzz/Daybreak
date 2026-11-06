@@ -12,7 +12,7 @@ authenticated HA adapter, local control socket, full-screen terminal client.
   Verify `pytest tests/test_model.py` before moving on.
 - [x] Store and transport (`store.py`, `ha.py`, respective tests): transactional
   completion/cleanup, no credentials in logs, real loopback HTTP/WebSocket test.
-- [x] Coordinator (`engine.py`, `tests/test_engine.py`): 10-second preparation,
+- [x] Coordinator (`engine.py`, `tests/test_engine.py`): configurable preparation (default 1 second),
   evening seed, Tag ordering, scope isolation, cancellation on network change,
   config replacement, restart recovery, expiry, no stale alarm replay.
 - [x] Local API (`service.py`, `tests/test_service.py`): restricted Unix socket,

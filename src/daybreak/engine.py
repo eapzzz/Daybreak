@@ -10,6 +10,8 @@ from .model import Settings, Plan, upcoming, plan_for, network_status, valid_loc
 from .store import Store, SettingsFiles
 from .ha import HomeAssistant, HAError, alarm_payload, dismiss_payload, command
 
+DISPATCH_MARGIN=.05
+
 
 def read_plan(raw:dict) -> Plan:
     return Plan(raw['date'],datetime.fromisoformat(raw['start']),datetime.fromisoformat(raw['end']),
@@ -58,7 +60,11 @@ class Engine:
         r=self.db.session(sid)
         return bool(r and not r['completed'] and self.revision==revision and self.network().state=='Home')
     def _allowed(self,sid:str,due:datetime,revision:int)->bool:
-        return self._session_allows_wakeup(sid,revision) and due.timestamp()-self.now().timestamp()>2
+        return self._session_allows_wakeup(sid,revision) and due.timestamp()-self.now().timestamp()>DISPATCH_MARGIN
+    def _command_timeout(self,due:datetime,maximum:float)->float:
+        remaining=due.timestamp()-self.now().timestamp()-DISPATCH_MARGIN
+        if remaining<=0: raise HAError('Alarm deadline reached; no late command sent.')
+        return min(maximum,remaining)
     def _label(self,sid:str,due:datetime)->str:
         suffix='_'+sid.split(':',1)[1][:8] if sid.startswith('test:') else ''
         return 'Daybreak_'+due.strftime('%Y%m%d_%H%M')+suffix
@@ -145,7 +151,7 @@ class Engine:
         now=self.now()
         for due in p.rings:
             delta=due.timestamp()-now.timestamp()
-            if 2<delta<=p.lead:
+            if DISPATCH_MARGIN<delta<=p.lead:
                 alarm=self.db.alarm(self._label(sid,due))
                 if not alarm or not alarm['prepared']: await self._prepare(sid,due)
 
@@ -162,9 +168,8 @@ class Engine:
         if not reuse_seed: self.db.record_alarm(label,sid,due,cfg,seed)
         self.retry[label]=self.now().timestamp()+3
         try:
-            remaining=due.timestamp()-self.now().timestamp()-2
             if not reuse_seed:
-                await self.ha.notify(cfg.notify_service,alarm_payload(due,label,cfg.alarm_package),timeout=min(3,max(.2,remaining)))
+                await self.ha.notify(cfg.notify_service,alarm_payload(due,label,cfg.alarm_package),timeout=self._command_timeout(due,3))
             if not seed:
                 for payload in (command('command_ringer_mode',command='normal'),
                                 command('command_volume_level',media_stream='alarm_stream',command=cfg.loud_alarm),
@@ -178,8 +183,7 @@ class Engine:
                             self.note('Alarm accepted; no time remains for further volume commands.','ERROR')
                         return
                     self.db.loud(sid,cfg)
-                    remaining=due.timestamp()-self.now().timestamp()-2
-                    await self.ha.notify(cfg.notify_service,payload,timeout=min(2,max(.2,remaining)))
+                    await self.ha.notify(cfg.notify_service,payload,timeout=self._command_timeout(due,2))
             self.db.sent(label,prepared=not seed)
             if not self._session_allows_wakeup(sid,revision): self.db.cancel_all(sid)
             self.note(('Evening seed' if seed else 'Alarm + volume')+f' requested for {due:%H:%M} (HA accepted).')

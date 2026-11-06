@@ -85,7 +85,7 @@ async def test_inline_preview_contains_last_alarm_without_truncation():
     async with console(122,43) as (c,p):
         c.next_date.text='2026-09-17'; c.next_time.text='07:10'; c.goto('next')
         await asyncio.sleep(.1)
-        assert '08:29:50' in screen_text(c)
+        assert '08:29:59' in screen_text(c)
 
 async def test_connection_and_diagnostics_show_nfc_controls():
     async with console() as (c,p):

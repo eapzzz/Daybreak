@@ -26,7 +26,7 @@ class Phone:
 @pytest.fixture
 def engine(tmp_path):
     files=SettingsFiles(tmp_path)
-    cfg=Settings(ha_url='http://home.test:8123',notify_service='notify.mobile_app_phone',qr_tag_id='bathroom',qr_device_id='phone',
+    cfg=Settings(lead_seconds=10,ha_url='http://home.test:8123',notify_service='notify.mobile_app_phone',qr_tag_id='bathroom',qr_device_id='phone',
                  ssid_entity='sensor.wifi',bssid_entity='sensor.bssid',home_ssids=['HomeWiFi'],home_bssids=['aa:bb:cc:dd:ee:ff'])
     files.save(cfg,'private'); db=Store(tmp_path/'state.db'); db.set_meta('armed',True)
     c=Clock(); ha=Phone(); e=Engine(files,db,ha,c)
@@ -205,7 +205,7 @@ async def test_slow_creation_keeps_valid_upcoming_alarm_without_late_volume(engi
     e,c,h=engine; c.now+=timedelta(seconds=1)
     async def late_response(payload):
         if payload['data'].get('intent_action')=='android.intent.action.SET_ALARM':
-            c.now+=timedelta(seconds=8)
+            c.now+=timedelta(seconds=10)
     h.hook=late_response
     await e.tick()
     assert len(creates(h))==1 and not volumes(h)
@@ -292,3 +292,39 @@ async def test_unacknowledged_evening_seed_is_retried_before_first_ring(engine):
     c.now=(c.now+timedelta(days=1)).replace(hour=5,minute=54,second=50)
     h.fail=False;await e.tick()
     assert len(creates(h))==2 and len(volumes(h))==2
+
+async def test_one_second_lead_dispatches_alarm_and_sound_only_in_last_second(engine):
+    e,c,h=engine;await e.configure({'lead_seconds':1})
+    c.now=c.now.replace(hour=5,minute=54,second=58);await e.tick()
+    assert not h.calls
+    c.now+=timedelta(seconds=1);await e.tick()
+    assert len(creates(h))==1 and len(volumes(h))==2
+    c.now+=timedelta(seconds=1);await e.tick()
+    assert len(creates(h))==1 and len(volumes(h))==2
+
+async def test_one_second_slow_creation_does_not_send_volume_after_deadline(engine):
+    e,c,h=engine;await e.configure({'lead_seconds':1})
+    c.now=c.now.replace(hour=5,minute=54,second=59)
+    async def late(payload):
+        if payload['data'].get('intent_action')=='android.intent.action.SET_ALARM':c.now+=timedelta(seconds=1)
+    h.hook=late;await e.tick()
+    assert len(creates(h))==1 and not volumes(h)
+
+async def test_one_second_request_timeouts_stay_inside_remaining_window(engine):
+    e,c,h=engine;await e.configure({'lead_seconds':1})
+    c.now=c.now.replace(hour=5,minute=54,second=59);timeouts=[]
+    original=h.notify
+    async def notify(service,payload,timeout=3):
+        timeouts.append(timeout);await original(service,payload,timeout)
+        c.now+=timedelta(milliseconds=150)
+    h.notify=notify;await e.tick()
+    assert len(timeouts)==4 and all(0<t<1 for t in timeouts)
+    assert timeouts==sorted(timeouts,reverse=True)
+
+async def test_one_second_tag_during_creation_still_prevents_loud_commands(engine):
+    e,c,h=engine;await e.configure({'lead_seconds':1});c.now=c.now.replace(hour=5,minute=54,second=59)
+    async def scanned(payload):
+        if payload['data'].get('intent_action')=='android.intent.action.SET_ALARM':await qr(e)
+    h.hook=scanned;await e.tick();h.hook=None;await e.tick()
+    assert not [p for p in volumes(h) if p['data']['command']==7]
+    assert dismisses(h)

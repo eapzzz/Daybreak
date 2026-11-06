@@ -36,7 +36,7 @@ class Settings:
     dense_minutes: int = 15
     dense_step: int = 1
     sparse_minutes: int = 3
-    lead_seconds: int = 10
+    lead_seconds: int = 1
     restore_minutes: int = 15
     evening_enabled: bool = True
     evening_time: str = '22:00'
@@ -86,7 +86,7 @@ def validate(s: Settings) -> None:
     for v in s.weekly.values():
         if v is not None: minutes(v)
     limits={'minimum_minutes':(1,240),'dense_minutes':(0,120),'dense_step':(1,30),
-            'sparse_minutes':(1,60),'lead_seconds':(5,45),'restore_minutes':(0,120),
+            'sparse_minutes':(1,60),'lead_seconds':(1,45),'restore_minutes':(0,120),
             'loud_alarm':(0,100),'loud_ring':(0,100),'normal_alarm':(0,100),'normal_ring':(0,100),
             'heartbeat_max_minutes':(1,1440),'refresh_seconds':(30,3600),'poll_seconds':(5,120)}
     for k,(lo,hi) in limits.items():

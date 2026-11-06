@@ -13,7 +13,7 @@ def test_invalid_settings_do_not_replace(tmp_path):
     f=SettingsFiles(tmp_path); f.save(Settings(),'keep')
     bad=Settings(lead_seconds=0)
     with pytest.raises(ValueError): f.save(bad)
-    assert f.load().lead_seconds==10 and f.token()=='keep'
+    assert f.load().lead_seconds==1 and f.token()=='keep'
 
 def test_backup_contains_no_token(tmp_path):
     f=SettingsFiles(tmp_path); f.save(Settings(),'private'); name=f.backup()

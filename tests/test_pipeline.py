@@ -23,7 +23,7 @@ async def test_phone_event_to_durable_cleanup_through_real_transports(tmp_path,c
             {'entity_id':'sensor.bssid','state':'aa:bb:cc:dd:ee:ff'}]
     async with fake_ha(states) as (url,seen,peers):
         files=SettingsFiles(tmp_path)
-        files.save(Settings(ha_url=url,notify_service='notify.mobile_app_phone',
+        files.save(Settings(lead_seconds=10,ha_url=url,notify_service='notify.mobile_app_phone',
             qr_tag_id='bathroom',qr_device_id='phone',ssid_entity='sensor.wifi',bssid_entity='sensor.bssid',
             home_ssids=['HomeWiFi'],home_bssids=['aa:bb:cc:dd:ee:ff']),'valid')
         db=Store(tmp_path/'pipeline.sqlite3'); db.set_meta('armed',True)

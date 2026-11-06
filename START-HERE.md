@@ -35,7 +35,7 @@ instalacji codzienna pobudka nie jest jeszcze włączona.
 
 **Next wake-up** ustawia jeden dzień, **Routine** — regułę tygodniową.
 Godzina 07:10 oznacza start o 07:10 i koniec o 08:30; przygotowanie zaczyna się
-o 07:09:50. Pełny podgląd jest dostępny przed zapisaniem.
+o 07:09:59. Pełny podgląd jest dostępny przed zapisaniem.
 
 Kolejne wersje wypychasz ze swojego komputera na GitHub, a na serwerze wybierasz
 **System → Pull & deploy**. URL, token, tag, sieci i historia zostają na serwerze.

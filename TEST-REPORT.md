@@ -111,3 +111,12 @@ New tests cover evening-to-morning preparation without a second SET_ALARM,
 restart persistence, NFC cleanup, sound-command retry without re-creation, and
 retrying an evening creation that was not acknowledged. These tests verify the
 commands and durable ledger, not the private storage of the phone's Clock app.
+
+## One-second preparation — 2026-11-06 (1.1.2)
+
+`python -m pytest -q`: **116 passed in 5.86s**. Added regression checks for no
+commands before T−1, alarm and sound dispatch at T−1, shrinking HTTP budgets,
+no late sound after a slow creation, and NFC priority during one-second dispatch.
+Existing timing tests explicitly retain their 10-second fixtures; new installs
+default to one second and saved configurations remain readable. Actual phone
+delivery within one second is not established by the synthetic tests.
