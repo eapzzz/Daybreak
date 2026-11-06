@@ -14,7 +14,7 @@ Assistant automation. Your normal Home Assistant controls remain separate.
 - Exact first-ring times. No hidden five-minute offset.
 - At least one hour, rounded **up** to the next half-hour: **07:10 → 08:30**.
 - Dense first phase, then spaced alarms; a final alarm at the exact end.
-- Alarm creation and loud-volume commands begin **1 second before each ring**.
+- Alarm creation and loud-volume commands begin **the configured preparation lead before each ring**.
 - **Home Wi-Fi only:** both the reported SSID and BSSID must match your approved
   networks. Away/Unknown inhibit new wake-up commands and queue cleanup.
 - The same Wi-Fi rule covers the optional evening alarm.
@@ -170,7 +170,7 @@ Default settings:
 | Round end up to | 30-minute boundary |
 | Dense phase | First 15 minutes, every minute |
 | Later phase | Every 3 minutes |
-| Preparation lead | 1 second |
+| Preparation lead | 10 seconds |
 | Daytime volume | 15 minutes after the end, or after tag confirmation |
 | Evening preparation | 22:00, one alarm at the next day's exact first-ring time |
 | Wake-up volume | Alarm 7, ring 7 |
@@ -179,11 +179,13 @@ Default settings:
 
 **05:55 → 07:00**, **07:00 → 08:00**, **07:10 → 08:30**, **07:30 → 08:30**.
 The preparation lead is configurable from 1 to 45 seconds. Existing saved
-settings retain their value until changed in **F3 · Routine**. One second is a
+settings retain their value until changed in **F3 · Routine**. The setting is a
 server dispatch window, not a guaranteed phone-delivery time: REST, Companion and
 Clock must process the commands within it. Requests use the remaining time budget;
 Daybreak stops sending wake-up commands at the deadline rather than replaying them
-late. A new timing value needs a real phone test before relying on it.
+late. A live one-second test rolled an alarm to the following day when Clock processed
+it too late, so the fresh-install default remains 10 seconds. Shorter values need
+a real phone test before relying on them.
 
 The first ring is exactly the entered time. End rounding is applied *after*
 adding the minimum duration. The final end alarm is always included. Dense phase

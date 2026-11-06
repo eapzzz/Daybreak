@@ -120,3 +120,15 @@ no late sound after a slow creation, and NFC priority during one-second dispatch
 Existing timing tests explicitly retain their 10-second fixtures; new installs
 default to one second and saved configurations remain readable. Actual phone
 delivery within one second is not established by the synthetic tests.
+
+## Target-device timing follow-up — 2026-11-06 (1.1.3)
+
+A physical test with a one-second lead failed: despite HA accepting the requests
+before the boundary, Clock processed an alarm too late and scheduled it for the
+following day. The test was stopped and scoped cancellation removed that entry
+(user-confirmed). The fresh-install default is therefore restored to 10 seconds;
+existing saved values are preserved and the selectable 1–45 second range remains.
+
+Synthetic coverage now checks both one- and two-second dispatch windows and
+remaining request budgets. `python -m pytest -q`: **118 passed in 5.75s**.
+Passing those tests is not proof that the phone can process a short lead in time.

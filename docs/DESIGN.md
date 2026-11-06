@@ -3,7 +3,7 @@
 Approved behavior: an exact first alarm, at least 60 wall-clock minutes, with the
 end rounded UP to a 30-minute boundary. Default 05:55 → 07:00; 07:10 → 08:30.
 First 15 minutes every minute, then every 3 minutes and a final end alarm.
-Prepare each alarm and volume only 1 second before it (configurable); no full-minute volume tick.
+Prepare each alarm and volume at the configured preparation lead (default 10 seconds); no full-minute volume tick.
 An evening seed uses the exact first alarm of the next scheduled day.
 
 A dedicated daemon owns all scheduling, Wi-Fi decisions, secrets, SQLite history,

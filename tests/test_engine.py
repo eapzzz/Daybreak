@@ -293,9 +293,10 @@ async def test_unacknowledged_evening_seed_is_retried_before_first_ring(engine):
     h.fail=False;await e.tick()
     assert len(creates(h))==2 and len(volumes(h))==2
 
-async def test_one_second_lead_dispatches_alarm_and_sound_only_in_last_second(engine):
-    e,c,h=engine;await e.configure({'lead_seconds':1})
-    c.now=c.now.replace(hour=5,minute=54,second=58);await e.tick()
+@pytest.mark.parametrize('lead',[1,2])
+async def test_short_lead_dispatches_alarm_and_sound_only_in_configured_window(engine,lead):
+    e,c,h=engine;await e.configure({'lead_seconds':lead})
+    c.now=c.now.replace(hour=5,minute=54,second=59-lead);await e.tick()
     assert not h.calls
     c.now+=timedelta(seconds=1);await e.tick()
     assert len(creates(h))==1 and len(volumes(h))==2
@@ -310,15 +311,16 @@ async def test_one_second_slow_creation_does_not_send_volume_after_deadline(engi
     h.hook=late;await e.tick()
     assert len(creates(h))==1 and not volumes(h)
 
-async def test_one_second_request_timeouts_stay_inside_remaining_window(engine):
-    e,c,h=engine;await e.configure({'lead_seconds':1})
-    c.now=c.now.replace(hour=5,minute=54,second=59);timeouts=[]
+@pytest.mark.parametrize('lead',[1,2])
+async def test_short_lead_request_timeouts_stay_inside_remaining_window(engine,lead):
+    e,c,h=engine;await e.configure({'lead_seconds':lead})
+    c.now=c.now.replace(hour=5,minute=54,second=60-lead);timeouts=[]
     original=h.notify
     async def notify(service,payload,timeout=3):
         timeouts.append(timeout);await original(service,payload,timeout)
         c.now+=timedelta(milliseconds=150)
     h.notify=notify;await e.tick()
-    assert len(timeouts)==4 and all(0<t<1 for t in timeouts)
+    assert len(timeouts)==4 and all(0<t<lead for t in timeouts)
     assert timeouts==sorted(timeouts,reverse=True)
 
 async def test_one_second_tag_during_creation_still_prevents_loud_commands(engine):

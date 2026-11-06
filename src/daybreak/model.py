@@ -36,7 +36,7 @@ class Settings:
     dense_minutes: int = 15
     dense_step: int = 1
     sparse_minutes: int = 3
-    lead_seconds: int = 1
+    lead_seconds: int = 10
     restore_minutes: int = 15
     evening_enabled: bool = True
     evening_time: str = '22:00'
