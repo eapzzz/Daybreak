@@ -13,12 +13,12 @@ authenticated HA adapter, local control socket, full-screen terminal client.
 - [x] Store and transport (`store.py`, `ha.py`, respective tests): transactional
   completion/cleanup, no credentials in logs, real loopback HTTP/WebSocket test.
 - [x] Coordinator (`engine.py`, `tests/test_engine.py`): 10-second preparation,
-  evening seed, QR ordering, scope isolation, cancellation on network change,
+  evening seed, Tag ordering, scope isolation, cancellation on network change,
   config replacement, restart recovery, expiry, no stale alarm replay.
 - [x] Local API (`service.py`, `tests/test_service.py`): restricted Unix socket,
   settings validation, serialized changes, diagnostics and daemon heartbeat.
 - [x] Console (`tui.py`, `tests/test_tui.py`): all pages, editable forms, picker,
-  preview, live state, tests, QR capture, errors, backup/restore, system actions.
+  preview, live state, tests, Tag capture, errors, backup/restore, system actions.
   Render real app through virtual terminal and export a demo screenshot.
 - [x] Deploy/docs (`install.sh`, `system.py`, README): isolated staging, protected
   files, no secrets in repo, Git workflow and in-console install/update paths.

@@ -86,3 +86,14 @@ async def test_inline_preview_contains_last_alarm_without_truncation():
         c.next_date.text='2026-09-17'; c.next_time.text='07:10'; c.goto('next')
         await asyncio.sleep(.1)
         assert '08:29:50' in screen_text(c)
+
+async def test_connection_and_diagnostics_show_nfc_controls():
+    async with console() as (c,p):
+        c.goto('connection'); await asyncio.sleep(.1)
+        text=screen_text(c)
+        assert 'Pair NFC tag' in text and 'Use captured tag' in text and 'Cancel pairing' in text
+        assert 'Pair existing QR' not in text
+        c.status_data['paired']={'tag_id':'captured-nfc','device_id':'captured-phone'}
+        assert 'captured-nfc' in c._pair_status() and 'captured-phone' in c._pair_status()
+        c.status_data['last_tag']='2026-11-06T08:00:00+01:00'
+        assert 'Last tag:' in c._diagnostic_card()

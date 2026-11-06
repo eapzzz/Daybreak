@@ -24,6 +24,8 @@ def minutes(value: str) -> int:
 class Settings:
     ha_url: str = ''
     notify_service: str = ''
+    # Legacy key names remain stable for installed settings and backups. The
+    # identifiers apply to HA tag_scanned events from NFC as well as old QR tags.
     qr_tag_id: str = ''
     qr_device_id: str = ''
     timezone: str = 'Europe/Warsaw'
@@ -100,7 +102,7 @@ def validate(s: Settings) -> None:
         raise ValueError('BSSID must look like aa:bb:cc:dd:ee:ff.')
     if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_.]+',s.alarm_package): raise ValueError('Invalid Android clock package.')
     for k in ('qr_tag_id','qr_device_id'):
-        if not isinstance(getattr(s,k),str) or len(getattr(s,k))>256: raise ValueError('Invalid QR identifier.')
+        if not isinstance(getattr(s,k),str) or len(getattr(s,k))>256: raise ValueError('Invalid tag identifier.')
 
 
 def localize(naive: datetime, tz: ZoneInfo) -> datetime:

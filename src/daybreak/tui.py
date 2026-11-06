@@ -186,13 +186,13 @@ class Console:
         self.notify_field,nf=field('Notification action','')
         self.zone,zf=field('Time zone','Europe/Warsaw')
         self.package,pf=field('Android clock package','com.google.android.deskclock')
-        self.qr_tag,qt=field('Bathroom QR tag ID','')
-        self.qr_device,qd=field('Scanning device ID','')
+        self.tag_id,qt=field('Wake-up NFC tag ID','')
+        self.tag_device,qd=field('Scanning device ID','')
         pages['connection']=self.page('Connection','Your credentials stay on the server, outside the Git checkout.',
             url,gap(),token,gap(),buttons(self.button('Save connection',self.save_connection),self.button('Check connection',self.check_connection)),
             gap(),nf,gap(),buttons(self.button('Choose phone',self.pick_phone)),gap(),VSplit([zf,pf],padding=4),gap(),
-            qt,gap(),qd,gap(),buttons(self.button('Pair existing QR',self.pair_qr),self.button('Use captured QR',self.save_pair)),
-            gap(),plain(self._pair_status,2,'class:good'))
+            qt,gap(),qd,gap(),buttons(self.button('Pair NFC tag',self.pair_tag),self.button('Use captured tag',self.save_pair),self.button('Cancel pairing',self.cancel_pair)),
+            gap(),plain(self._pair_status,4,'class:good'))
         self.ssid_sensor,ss=field('SSID sensor',''); self.bssid_sensor,bs=field('BSSID sensor','')
         self.heartbeat_sensor,hs=field('Optional phone heartbeat sensor','')
         self.ssids,sa=field('Approved SSIDs  ·  one per line','',height=3)
@@ -215,7 +215,7 @@ class Console:
             VSplit(sound_boxes[:2],padding=5),gap(),VSplit(sound_boxes[2:],padding=5),gap(),
             buttons(self.button('Save sound',self.save_sound),self.button('Run full phone test',self.start_test)),gap(),
             Frame(plain('Wake-up: normal ringtone mode, then the configured alarm and ringtone levels.\n'
-                        'After QR: stop Daybreak alarms and restore daytime levels.\n'
+                        'After tag confirmation: stop Daybreak alarms and restore daytime levels.\n'
                         'No extra volume tick on the full minute.',4),title='BEHAVIOR'))
         pages['diagnostics']=self.page('Diagnostics','Real tests use a separate session. They do not complete your next morning.',
             buttons(self.button('Check connection',self.check_connection),self.button('Refresh sensors',self.refresh_sensors)),gap(),
@@ -269,7 +269,7 @@ class Console:
             lines.append(f"  {p['date']}    {stamp(p['start'])}     {stamp(p['end'])}       {p['count']:2}      {p['source']}")
         return '\n'.join(lines)
     def _checklist(self):
-        checks=[('Connection',bool(self.cfg.ha_url and self.token_set)),('Phone + QR',bool(self.cfg.notify_service and self.cfg.qr_tag_id and self.cfg.qr_device_id)),
+        checks=[('Connection',bool(self.cfg.ha_url and self.token_set)),('Phone + tag',bool(self.cfg.notify_service and self.cfg.qr_tag_id and self.cfg.qr_device_id)),
                 ('Home network',bool(self.cfg.home_ssids and self.cfg.home_bssids and self.cfg.ssid_entity and self.cfg.bssid_entity)),
                 ('Phone test confirmed',bool(self.status_data.get('test_passed')))]
         return FormattedText(sum(([('class:good' if ok else 'class:muted',f"  {'✓' if ok else '○'}  {name}\n")] for name,ok in checks),[]))
@@ -280,20 +280,23 @@ class Console:
         except (ValueError,TypeError): return 'Enter a valid date and HH:MM time to preview the complete series.'
     def _pair_status(self):
         s=self.status_data
-        if s.get('paired'): return 'QR captured. Choose “Use captured QR” to save both identifiers.'
-        if s.get('pairing'): return 'Waiting for a QR scan from the Companion app…'
-        return 'Paired QR is configured.' if self.cfg.qr_tag_id else 'Choose “Pair existing QR”, then scan the printed bathroom code.'
+        if s.get('paired'):
+            p=s['paired']
+            return f"Tag captured. Review, then choose “Use captured tag”.\nTag: {p['tag_id']}\nPhone: {p['device_id']}"
+        if s.get('pairing'): return 'Waiting for an NFC tap from the Companion app… (2 minutes)'
+        return ('Saved wake-up tag is configured. Choose “Pair NFC tag” to replace it.' if self.cfg.qr_tag_id
+                else 'Choose “Pair NFC tag”, then hold your phone near the bathroom tag.')
     def _test_card(self):
         test=self.status_data.get('test')
         if not test: return '  No test in progress.\n  The rolling test prepares 3 alarms at 10 seconds before each ring.'
-        p=test['plan']; lines=[f"  {'COMPLETE' if test['completed'] else 'RUNNING'}  ·  {test['kind']}  ·  {test.get('reason') or 'Waiting for phone / QR'}",'']
+        p=test['plan']; lines=[f"  {'COMPLETE' if test['completed'] else 'RUNNING'}  ·  {test['kind']}  ·  {test.get('reason') or 'Waiting for phone / tag'}",'']
         for a in p['alarms']: lines.append(f"  Prepare {stamp(a['prepare'],True)}   →   Ring {stamp(a['ring'],True)}")
         lines.extend(['',f"  Cleanup pending: {self.status_data.get('pending_cleanup',0)}",
                       '  Confirm only after checking the actual phone.'])
         return '\n'.join(lines)
     def _diagnostic_card(self):
         s=self.status_data
-        return '\n'.join([f"  HA: {s.get('connection_error') or 'Connected'}",f"  Last QR: {s.get('last_qr') or 'none'}",
+        return '\n'.join([f"  HA: {s.get('connection_error') or 'Connected'}",f"  Last tag: {s.get('last_tag') or s.get('last_qr') or 'none'}",
                           f"  Confirmed test: {s.get('test_passed') or 'not yet'}",f"  Last error: {s.get('last_error') or 'none'}"])
     def _system_card(self):
         return '\n'.join([f'  Daybreak {__version__}',f"  Daily routine: {'enabled' if self.status_data.get('armed') else 'setup / paused'}",
@@ -337,7 +340,7 @@ class Console:
     def load_fields(self,cfg:dict):
         self.cfg=Settings.from_dict(cfg['settings']); self.token_set=cfg.get('token_set',False)
         for a,v in [(self.url,self.cfg.ha_url),(self.notify_field,self.cfg.notify_service),(self.zone,self.cfg.timezone),
-                    (self.package,self.cfg.alarm_package),(self.qr_tag,self.cfg.qr_tag_id),(self.qr_device,self.cfg.qr_device_id),
+                    (self.package,self.cfg.alarm_package),(self.tag_id,self.cfg.qr_tag_id),(self.tag_device,self.cfg.qr_device_id),
                     (self.ssid_sensor,self.cfg.ssid_entity),(self.bssid_sensor,self.cfg.bssid_entity),
                     (self.heartbeat_sensor,self.cfg.heartbeat_entity),(self.ssids,'\n'.join(self.cfg.home_ssids)),
                     (self.bssids,'\n'.join(self.cfg.home_bssids)),(self.evening_time,self.cfg.evening_time)]: a.text=v
@@ -352,7 +355,7 @@ class Console:
     async def save_connection(self):
         await self.save({'ha_url':self.url.text.strip().rstrip('/'),'notify_service':self.notify_field.text.strip(),
                          'timezone':self.zone.text.strip(),'alarm_package':self.package.text.strip(),
-                         'qr_tag_id':self.qr_tag.text.strip(),'qr_device_id':self.qr_device.text.strip()},self.token.text.strip() or None)
+                         'qr_tag_id':self.tag_id.text.strip(),'qr_device_id':self.tag_device.text.strip()},self.token.text.strip() or None)
     async def save_routine(self):
         changes={k:int(a.text.strip()) for k,a in self.routine_fields.items()}
         changes.update(weekly={k:(a.text.strip() or None) for k,a in self.weekly.items()},
@@ -367,7 +370,7 @@ class Console:
         changes.update({k:int(a.text.strip()) for k,a in self.net_fields.items()})
         await self.save(changes)
     async def check_connection(self):
-        self.toast('Checking HA API and QR event stream…'); data=await self.control.action('connect'); self.toast(data['message'])
+        self.toast('Checking HA API and tag event stream…'); data=await self.control.action('connect'); self.toast(data['message'])
     async def pick_phone(self):
         self.toast('Loading notification actions…'); data=await self.control.action('discover'); options=[]
         for domain in data['services']:
@@ -396,10 +399,20 @@ class Console:
         await self.control.action('connect')
         if await self.confirm('Register current home Wi-Fi','The selected sensors must currently describe your home Wi-Fi.\nAdd their current SSID and BSSID to the approved network list?'):
             data=await self.control.action('use_wifi'); self.load_fields(data); self.toast('Current Wi-Fi registered as Home.')
-    async def pair_qr(self):
+    async def pair_tag(self):
         data=await self.control.action('pair'); self.toast(data['message'])
+    async def cancel_pair(self):
+        data=await self.control.action('cancel_pair'); self.toast(data['message'])
     async def save_pair(self):
-        data=await self.control.action('save_pair'); self.load_fields(data); self.toast('Bathroom QR and scanning device paired.')
+        status=await self.control.status(); paired=status.get('paired')
+        if not paired: raise ValueError('No tag has been captured yet. Choose “Pair NFC tag” first.')
+        message=(f"Tag: {paired['tag_id']}\nPhone: {paired['device_id']}\n\n"
+                 'This replaces the saved wake-up tag. The previous identifier will stop completing wake-ups.\n'
+                 'If the identifiers change, daily wake-ups pause until you confirm a new phone test and enable the routine.\n'
+                 'Update any separate Home Assistant tag handlers too.')
+        if not await self.confirm('Save wake-up tag',message): return
+        data=await self.control.action('save_pair'); self.load_fields(data)
+        self.toast('Tag saved. If changed, run Diagnostics → rolling test, then enable the daily routine in System.')
     async def preview_current(self):
         p=next(iter(self.status_data.get('plans',[])),None); await self.show_text('Alarm timeline',plan_text(p))
     async def preview_next(self):
@@ -414,7 +427,7 @@ class Console:
         if await self.confirm('Use the weekly routine','Remove the one-time override and use the normal routine again?'):
             await self.control.action('set_override',override=None); self.toast('One-time override cleared.')
     async def start_test(self):
-        if await self.confirm('Real phone test','This creates three real alarms, a minute apart, and changes phone volume.\nLet two alarms ring, then scan the bathroom QR.\nThe next real morning is not marked complete.'):
+        if await self.confirm('Real phone test','This creates three real alarms, a minute apart, and changes phone volume.\nLet two alarms ring, then hold your phone near the bathroom NFC tag.\nThe next real morning is not marked complete.'):
             await self.control.action('start_test'); self.goto('diagnostics'); self.toast('Rolling test started. Watch the live timeline.')
     async def start_network_test(self):
         if await self.confirm('Home Wi-Fi test','A real test alarm is prepared 10 seconds before ringing.\nAfter it is prepared, disconnect the phone from home Wi-Fi.\nVerify Daybreak cancels its alarm and restores daytime volume.'):
@@ -521,7 +534,7 @@ class DemoControl:
                 'network':{'state':'Home','reason':'SSID and BSSID match the approved home network.','ssid':'Home Wi-Fi',
                            'bssid':'aa:bb:cc:dd:ee:ff','ssid_reported':'2026-09-16T19:40:03+00:00'},
                 'plans':[p.public() for p in upcoming(self.cfg,self.now,self.override)],'override':self.override,
-                'last_qr':'2026-09-16T06:04:21+02:00','test_passed':'2026-09-16T20:15:00+02:00',
+                'last_tag':'2026-09-16T06:04:21+02:00','last_qr':'2026-09-16T06:04:21+02:00','test_passed':'2026-09-16T20:15:00+02:00',
                 'pending_cleanup':0,'last_error':'','test':None,'sessions':[],
                 'history':[{'at':'2026-09-16T19:40:03+00:00','level':'INFO','message':'Home network: Home. Approved Wi-Fi report.'},
                            {'at':'2026-09-16T18:15:00+00:00','level':'INFO','message':'User confirmed the live phone test.'}]}

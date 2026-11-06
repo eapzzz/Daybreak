@@ -124,7 +124,7 @@ class Store:
         return [dict(r) for r in self.db.execute(sql+' ORDER BY due DESC',args)]
     def sent(self,label:str,prepared:bool=False):
         with self.db:
-            # A concurrent QR/network event takes priority over late API success.
+            # A concurrent tag/network event takes priority over late API success.
             self.db.execute("UPDATE alarms SET status=CASE WHEN status='cancel_pending' THEN status ELSE 'sent' END,prepared=MAX(prepared,?) WHERE label=?",(int(prepared),label))
     def cancel_all(self,sid:str|None=None):
         with self.db:

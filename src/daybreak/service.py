@@ -47,8 +47,9 @@ def build_app(engine:Engine)->web.Application:
             result={'states':list(engine.ha.states.values()),'services':engine.services_cache}
         elif name=='refresh': result=await engine.refresh_sensors()
         elif name=='pair': result=engine.begin_pairing()
+        elif name=='cancel_pair': result=engine.cancel_pairing()
         elif name=='save_pair':
-            if not engine.paired: raise ValueError('No QR has been captured yet.')
+            if not engine.paired: raise ValueError('No tag has been captured yet.')
             result=await engine.configure({'qr_tag_id':engine.paired['tag_id'],'qr_device_id':engine.paired['device_id']})
             engine.paired=None
         elif name=='use_wifi':

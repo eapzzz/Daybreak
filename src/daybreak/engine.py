@@ -69,10 +69,12 @@ class Engine:
         if self.pair_until>self.now().timestamp():
             if data.get('tag_id') and data.get('device_id'):
                 self.paired={'tag_id':str(data['tag_id']),'device_id':str(data['device_id'])}
-                self.pair_until=0; self.note('QR captured. Save it from Connection to pair.')
+                self.pair_until=0; self.note('Tag captured. Review and save it from Connection to pair.')
             return
         if data.get('tag_id')!=self.cfg.qr_tag_id or data.get('device_id')!=self.cfg.qr_device_id: return
-        now=self.now(); self.db.set_meta('last_qr',now.isoformat())
+        now=self.now(); self.db.set_meta('last_tag',now.isoformat())
+        # Retain the legacy metadata/status contract for existing HA bridges.
+        self.db.set_meta('last_qr',now.isoformat())
         test=self._active_test()
         if test: scopes=[test['id']]
         else:
@@ -82,13 +84,17 @@ class Engine:
             if not scopes:
                 p=plan_for(self.cfg,now.date(),self.db.meta('override'))
                 if p: scopes=[self._ensure(p)]
-        # No await before durable inhibition: a QR arriving during a REST call wins.
+        # No await before durable inhibition: a tag arriving during a REST call wins.
         for sid in scopes:
-            self.db.complete(sid,'QR'); self.note('Bathroom QR accepted. '+('Test finished.' if sid.startswith('test:') else 'Today is complete.'))
+            self.db.complete(sid,'Tag'); self.note('Wake-up tag accepted. '+('Test finished.' if sid.startswith('test:') else 'Today is complete.'))
 
     def begin_pairing(self):
         self.paired=None; self.pair_until=self.now().timestamp()+120
-        return {'message':'Scan your existing bathroom QR within two minutes.'}
+        return {'message':'Hold your phone near the bathroom NFC tag within two minutes. Review the captured identifiers before saving.'}
+
+    def cancel_pairing(self):
+        self.paired=None; self.pair_until=0
+        return {'message':'Pairing cancelled. The saved wake-up tag is unchanged.'}
 
     async def tick(self):
         async with self.lock:
@@ -176,7 +182,7 @@ class Engine:
     async def _cleanup(self):
         now=self.now().timestamp()
         if not self.ha: return
-        # A single cancellation per tick keeps QR/network changes responsive.
+        # A single cancellation per tick keeps tag/network changes responsive.
         for a in self.db.alarms():
             if a['status']!='cancel_pending' or now<self.cancel_next: continue
             key='cancel:'+a['label']
@@ -227,11 +233,26 @@ class Engine:
     async def configure(self,changes:dict,token:str|None=None):
         raw=self.cfg.to_dict(); raw.update(changes); new=Settings.from_dict(raw)
         async with self.lock:
+            tag_changed=(new.qr_tag_id,new.qr_device_id)!=(self.cfg.qr_tag_id,self.cfg.qr_device_id)
+            if tag_changed:
+                now=self.now().timestamp()
+                if self._active_test() or any(not r['completed'] and
+                        datetime.fromisoformat(r['plan']['start']).timestamp()-self.cfg.lead_seconds <= now <=
+                        datetime.fromisoformat(r['plan']['restore']).timestamp() for r in self.db.work_sessions()):
+                    raise ValueError('Finish the running wake-up or phone test before replacing the tag.')
             if new.notify_service!=self.cfg.notify_service and any(a['status']!='cancelled' for a in self.db.alarms()):
                 raise ValueError('Complete alarm cleanup in Diagnostics before changing the phone.')
-            self.files.backup(); self.files.save(new,token)
+            self.files.backup()
+            if tag_changed:
+                # Pause durably before changing the saved identifiers. Never let
+                # an old completed test re-confirm a newly paired tag.
+                self.db.set_meta('armed',False); self.db.set_meta('test_passed',None)
+                self.db.set_meta('active_test',None); self.test_id=None
+            self.files.save(new,token)
             reconnect=new.ha_url!=self.cfg.ha_url or bool(token)
             self._invalidate_future(); self.cfg=new
+            if tag_changed:
+                self.note('Wake-up tag changed. Daily routine paused; run and confirm a new phone test before enabling it.')
             if reconnect:
                 if self.ha: await self.ha.close()
                 self.ha=None
@@ -258,13 +279,13 @@ class Engine:
             p=Plan(start.date().isoformat(),start,rings[-1],rings[-1]+timedelta(minutes=3),rings,self.cfg.lead_seconds,'Live test')
             self.test_id='test:'+uuid.uuid4().hex[:12]
             self.db.ensure_session(self.test_id,p.public(),kind); self.db.set_meta('active_test',self.test_id)
-            self.note('Live '+kind+' started. '+('Scan QR after the second alarm.' if kind=='test' else 'Leave home Wi-Fi after the test alarm has been prepared.'))
+            self.note('Live '+kind+' started. '+('Hold your phone near the NFC tag after the second alarm.' if kind=='test' else 'Leave home Wi-Fi after the test alarm has been prepared.'))
             return p.public()
 
     def accept_test(self):
         r=self.db.session(self.test_id) if self.test_id else None
-        if not r or not r['completed'] or r['reason'] not in ('QR','Network left home') or not self.db.count(r['id']):
-            raise ValueError('Wait for a prepared alarm and QR/network completion before confirming.')
+        if not r or not r['completed'] or r['reason'] not in ('Tag','QR','Network left home') or not self.db.count(r['id']):
+            raise ValueError('Wait for a prepared alarm and tag/network completion before confirming.')
         if any(a['status']=='cancel_pending' for a in self.db.alarms(r['id'])) or r['needs_normal']:
             raise ValueError('Wait for cleanup to finish before confirming.')
         self.db.set_meta('test_passed',self.now().isoformat()); self.note('User confirmed the live phone test.')
@@ -277,7 +298,7 @@ class Engine:
     async def check_connection(self):
         if not self.ha: raise ValueError('Save a Home Assistant URL and token in Connection first.')
         await self.ha.poll(); self.services_cache=await self.ha.services()
-        return {'message':'HA API reachable. '+('QR event stream ready.' if self.connected() else 'Waiting for QR event stream.'),
+        return {'message':'HA API reachable. '+('Tag event stream ready.' if self.connected() else 'Waiting for tag event stream.'),
                 'services':self.services_cache,'states':list(self.ha.states.values())}
 
     async def refresh_sensors(self):
@@ -293,8 +314,10 @@ class Engine:
         test=self.db.session(self.test_id) if self.test_id else None
         return {'now':self.now().isoformat(),'armed':self.db.meta('armed',False),'ready':self.cfg.ready(),
                 'connected':self.connected(),'connection_error':self.ha.error if self.ha else 'Enter HA URL and token in Connection.',
+                'wake_tag_id':self.cfg.qr_tag_id,'wake_tag_device_id':self.cfg.qr_device_id,
                 'network':self.network().public(),'plans':plans,'override':self.db.meta('override'),
-                'last_qr':self.db.meta('last_qr'),'test':test,'test_passed':self.db.meta('test_passed'),
+                'last_tag':self.db.meta('last_tag',self.db.meta('last_qr')),
+                'last_qr':self.db.meta('last_tag',self.db.meta('last_qr')),'test':test,'test_passed':self.db.meta('test_passed'),
                 'pending_cleanup':sum(a['status']=='cancel_pending' for a in self.db.alarms()),
                 'last_error':self.last_error,'pairing':self.pair_until>self.now().timestamp(),'paired':self.paired,
                 'history':self.db.events(80),'sessions':[{**r,'alarm_count':self.db.count(r['id'])} for r in self.db.sessions(30)]}

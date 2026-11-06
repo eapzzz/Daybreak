@@ -3,8 +3,8 @@
 **An independent, home-aware wake-up service with a complete SSH control room.**
 
 Daybreak schedules Android Clock alarms through Home Assistant, restores the
-right volume shortly before each ring, and ends the morning when you scan your
-bathroom QR. Scheduling and completion live on the server, not in a Home
+right volume shortly before each ring, and ends the morning when you hold your phone near your
+bathroom NFC tag. Scheduling and completion live on the server, not in a Home
 Assistant automation. Your normal Home Assistant controls remain separate.
 
 ![Daybreak control room — actual console running with demo data](docs/overview.png)
@@ -18,7 +18,7 @@ Assistant automation. Your normal Home Assistant controls remain separate.
 - **Home Wi-Fi only:** both the reported SSID and BSSID must match your approved
   networks. Away/Unknown inhibit new wake-up commands and queue cleanup.
 - The same Wi-Fi rule covers the optional evening alarm.
-- Your existing Home Assistant QR can be paired by scanning it. Completion is
+- Pair a Home Assistant NFC tag by tapping it with your phone. Completion is
   durable, local, date-scoped and independent of HA helper values.
 - A one-time next wake-up, weekly routine, live previews, phone/network tests,
   history, service administration, Git deployment and backups — in the console.
@@ -38,7 +38,8 @@ screenshots use 122 × 43. Pages scroll in smaller windows.
 Home Assistant must expose its authenticated REST and WebSocket APIs to the
 host. The Android Companion app needs its already-working notification commands,
 Wi-Fi Connection and Wi-Fi BSSID sensors, and **Persistent Connection → Always**.
-An existing bathroom QR is fine; there is no need to reprint it.
+Use a writable NFC tag (NTAG213 is sufficient). Write a new Home Assistant tag
+from the Companion app before pairing it in Daybreak.
 
 Put the contents of this repository at the root of your GitHub repository.
 Do **not** copy server configuration, tokens, databases or diagnostic reports
@@ -80,8 +81,10 @@ In **F4 · Connection**:
    **Save connection**. Use the API-accessible base URL, not `/api`; redirects to
    an extra login portal are not followed. Use HTTPS for non-local connections.
 2. Select **Choose phone** and choose the working `notify.mobile_app_…` action.
-3. Select **Pair existing QR**, scan the bathroom code from Companion, then choose
-   **Use captured QR**. This saves both the tag and scanning device identifiers.
+3. Select **Pair NFC tag**, hold your phone near the bathroom tag, review the
+   captured tag and device identifiers, then choose **Use captured tag** and confirm.
+   **Cancel pairing** discards a capture. Replacing either saved identifier pauses
+   daily wake-ups and clears the old phone-test confirmation; test again before enabling.
 4. Use **Check connection**. Keep the existing Clock package unless your phone
    uses a different tested app.
 
@@ -108,8 +111,8 @@ Wi-Fi values may legitimately remain unchanged for hours.
 In **F7 · Diagnostics**:
 
 - **Run rolling test** prepares three real alarms one minute apart, at the same
-  configured lead time as the real routine. Let two ring, then scan the bathroom
-  QR. Check cancellation and daytime volume; wait for pending cleanup to reach
+  configured lead time as the real routine. Let two ring, then hold your phone near the bathroom
+  NFC tag. Check cancellation and daytime volume; wait for pending cleanup to reach
   zero and choose **Confirm test passed**.
 - **Run Wi-Fi test** prepares one real test alarm. Once prepared, take the phone
   off home Wi-Fi and check that the console changes to Away/Unknown, Daybreak
@@ -125,6 +128,37 @@ In **F9 · System**, choose **Enable daily routine**, then **Enable autostart**.
 Enabling the routine requires complete setup and a confirmed live phone test.
 **F1 · Overview** shows the next plan, network, readiness and connection.
 
+## Moving from a printed QR to NFC
+
+1. Keep the old tag configured until the NFC tag can be read reliably. In the
+   Android Companion app, open **Settings → Tags**, create a **new** tag and write
+   it to the NFC sticker. Do not write the old QR identifier to the sticker.
+2. Outside a running wake-up or live test, pair the new tag in **F4 · Connection**.
+   Review both identifiers before saving. The old identifier is no longer accepted
+   by Daybreak after replacement. Daily wake-ups pause until the new test is confirmed.
+3. Run **F7 · Diagnostics → Run rolling test**. After two rings, tap the NFC tag;
+   verify cancellation and restored volume on the phone, wait for zero cleanup,
+   and confirm the test. Check the real lock-screen/NFC behavior on your phone.
+4. Update any separate HA consumers of the old tag (custom integrations, morning
+   brief handlers, automations). A tag-registry deletion alone is not revocation
+   of consumers that still match the old identifier. Remove the old registry entry
+   and printed QR only after the NFC path works and the old tag is ignored.
+5. Enable the daily routine again in **F9 · System**. Keep a separate alarm until
+   the first real morning has been verified.
+
+The service still reads existing settings and backups. Internal `qr_tag_id` and
+`qr_device_id` keys are retained for compatibility; they now identify the wake-up
+**tag**, regardless of medium. Existing history is preserved. New completions use
+`Tag`; historical `QR` completions remain readable. `/status` adds `last_tag`,
+`wake_tag_id` and `wake_tag_device_id`, while keeping `last_qr` as a compatibility
+alias for existing HA status bridges. Changing labels alone does not re-pair or
+invalidate an existing QR.
+
+Standard HA NFC and QR tags produce the same `tag_scanned` event with `tag_id`
+and `device_id`. A fresh identifier retires the old QR, but it does not prove that
+future events came from NFC rather than a copy of the new identifier. Do not put
+your HA token or password on the tag. See the [Companion tag documentation](https://companion.home-assistant.io/docs/integrations/universal-links/).
+
 ## Schedule semantics
 
 Default settings:
@@ -137,7 +171,7 @@ Default settings:
 | Dense phase | First 15 minutes, every minute |
 | Later phase | Every 3 minutes |
 | Preparation lead | 10 seconds |
-| Daytime volume | 15 minutes after the end, or after QR completion |
+| Daytime volume | 15 minutes after the end, or after tag confirmation |
 | Evening preparation | 22:00, one alarm at the next day's exact first-ring time |
 | Wake-up volume | Alarm 7, ring 7 |
 | Daytime volume | Alarm 4, ring 3 |
@@ -159,7 +193,7 @@ tracked alarm is cancelled before a replacement is created. A session already
 under way keeps its original timeline. Changes are validated before writing and
 configuration backups are kept automatically.
 
-Closing SSH never owns the scheduling loop. Restarting the service preserves QR
+Closing SSH never owns the scheduling loop. Restarting the service preserves tag
 completion, plans, tracked alarms and pending cancellation. Missed past alarm
 times are not replayed. Nonexistent DST local times move to the first valid local
 minute; an ambiguous autumn time uses its first occurrence. The console preview
@@ -194,10 +228,10 @@ its window but had no alarms while Away/Unknown is recorded as skipped.
 | Overview | Next session, service/network readiness, coming-up list, shortcuts |
 | Next wake-up | Date/time, live timeline, one-date override and routine reset |
 | Routine | All weekdays, density, spacing, length, rounding, lead, evening seed |
-| Connection | URL, masked token, notification picker, clock package, timezone, QR pairing |
+| Connection | URL, masked token, notification picker, clock package, timezone, NFC tag pairing |
 | Home Wi-Fi | Sensor pickers, SSID/BSSID lists, current-network capture, polling/refresh |
 | Sound | Four volume levels and live test |
-| Diagnostics | Connectivity, sensor refresh, rolling/Wi-Fi tests, cleanup, last QR/errors |
+| Diagnostics | Connectivity, sensor refresh, rolling/Wi-Fi tests, cleanup, last tag/errors |
 | History | Filtered events, morning summaries, sanitized support export |
 | System | Service/autostart, Git deployment, configuration backup/restore |
 
@@ -250,7 +284,7 @@ python3 -m venv .venv
 
 The demo uses generic synthetic data and sends no phone commands. The terminal
 is implemented with **prompt_toolkit**. Screenshots in `docs/` were rendered from
-the actual console, not from a visual mockup. Test adapters use loopback HTTP,
+the actual 1.0 console; tag labels changed in 1.1. Test adapters use loopback HTTP,
 WebSocket and Unix sockets; they do not require a live HA account.
 
 For an isolated daemon during development, the CLI accepts `--daemon`,

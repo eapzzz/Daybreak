@@ -210,3 +210,60 @@ async def test_slow_creation_keeps_valid_upcoming_alarm_without_late_volume(engi
     await e.tick()
     assert len(creates(h))==1 and not volumes(h)
     assert not any(a['status']=='cancel_pending' for a in e.db.alarms())
+
+async def test_replace_tag_revokes_previous_identifier_and_survives_restart(engine):
+    e,c,h=engine; c.now=c.now.replace(hour=14)
+    e.db.set_meta('test_passed','old-phone-test')
+    await e.configure({'qr_tag_id':'new-nfc-tag'})
+    assert not e.db.meta('armed') and e.db.meta('test_passed') is None
+    await qr(e)
+    assert e.status()['last_tag'] is None
+    restarted=Engine(e.files,e.db,h,c)
+    await restarted.on_event({'event_type':'tag_scanned','data':{'tag_id':'new-nfc-tag','device_id':'another-phone'}})
+    assert restarted.status()['last_tag'] is None
+    await restarted.on_event({'event_type':'tag_scanned','data':{'tag_id':'new-nfc-tag','device_id':'phone'}})
+    assert restarted.db.session('wake:2026-09-17')['reason']=='Tag'
+    assert restarted.status()['last_tag']==restarted.status()['last_qr']
+    assert restarted.status()['wake_tag_id']=='new-nfc-tag'
+
+async def test_same_pair_keeps_armed_state_and_confirmed_test(engine):
+    e,c,h=engine; e.db.set_meta('test_passed','existing-test')
+    await e.configure({'qr_tag_id':e.cfg.qr_tag_id,'qr_device_id':e.cfg.qr_device_id})
+    assert e.db.meta('armed') and e.db.meta('test_passed')=='existing-test'
+
+async def test_replacing_tag_during_active_session_is_rejected(engine):
+    e,c,h=engine; c.now+=timedelta(seconds=1); await e.tick()
+    with pytest.raises(ValueError,match='running wake-up'):
+        await e.configure({'qr_tag_id':'new-nfc-tag'})
+    assert e.cfg.qr_tag_id=='bathroom' and e.db.meta('armed')
+
+async def test_replacing_tag_during_live_test_is_rejected(engine):
+    e,c,h=engine; c.now=c.now.replace(hour=14); await e.start_test()
+    with pytest.raises(ValueError,match='phone test'):
+        await e.configure({'qr_tag_id':'new-nfc-tag'})
+    assert e.cfg.qr_tag_id=='bathroom'
+
+async def test_tag_pairing_capture_cancel_and_timeout(engine):
+    e,c,h=engine; c.now=c.now.replace(hour=14)
+    e.begin_pairing()
+    await e.on_event({'event_type':'tag_scanned','data':{'tag_id':'new-nfc-tag','device_id':'phone'}})
+    assert e.paired=={'tag_id':'new-nfc-tag','device_id':'phone'}
+    assert e.cfg.qr_tag_id=='bathroom' and e.status()['last_tag'] is None
+    e.cancel_pairing(); assert e.paired is None and not e.status()['pairing']
+    e.begin_pairing(); c.now+=timedelta(minutes=3)
+    await e.on_event({'event_type':'tag_scanned','data':{'tag_id':'expired-tag','device_id':'phone'}})
+    assert e.paired is None and e.cfg.qr_tag_id=='bathroom'
+
+async def test_last_tag_reads_legacy_history(engine):
+    e,c,h=engine; e.db.set_meta('last_qr','legacy-timestamp')
+    assert e.status()['last_tag']==e.status()['last_qr']=='legacy-timestamp'
+
+async def test_old_completed_test_cannot_confirm_a_replacement_tag(engine):
+    e,c,h=engine; c.now=c.now.replace(hour=14)
+    p=await e.start_test(); c.now=datetime.fromisoformat(p['alarms'][0]['prepare'])
+    await e.tick(); await qr(e)
+    for _ in range(4): await e.tick(); c.now+=timedelta(seconds=1)
+    e.accept_test()
+    await e.configure({'qr_tag_id':'new-nfc'})
+    assert e.test_id is None and e.db.meta('active_test') is None
+    with pytest.raises(ValueError): e.accept_test()

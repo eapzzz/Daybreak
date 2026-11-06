@@ -80,3 +80,26 @@ Not run in this environment:
 
 Complete Connection, Home Wi-Fi and both live tests in the console before
 arming the routine. API acceptance is not physical-phone confirmation.
+
+## NFC migration update — 2026-11-06 (1.1.0)
+
+Local verification on Linux / Python 3.14.0, using isolated dependencies:
+
+```text
+python -m pytest -q
+109 passed in 5.43s
+bash -n install.sh
+PASS
+```
+
+Added checks cover NFC pairing capture/cancel/timeout, explicit save, replacement
+of the old tag, wrong-phone rejection, persistence across restart, preservation of
+legacy settings/history/status, rejection during an active wake-up or live test,
+and mandatory retesting after changed identifiers. A completed test from before
+the tag change cannot re-confirm the replacement. The real TUI is rendered and
+checked for NFC controls. Existing transport/scheduler tests remain in the suite.
+
+These local tests use synthetic identifiers and fake HA/phone transports. Physical
+NTAG213 reading, alarm cancellation, Android lock-screen behavior and the first
+real morning still require the user's phone. The earlier verification record
+above describes 1.0 and is retained as historical evidence.

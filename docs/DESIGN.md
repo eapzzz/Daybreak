@@ -19,16 +19,16 @@ REST fetching does NOT make an unchanged phone report fresh. An optional phone
 heartbeat sensor can impose freshness without expiring unchanged Wi-Fi names.
 No public IP rule. No secret or household identifiers in the repository.
 
-QR matches tag and device IDs. It ends today's real session, not tomorrow's seed.
+Tag matches tag and device IDs. It ends today's real session, not tomorrow's seed.
 A test has an independent scope and never completes a real day. Completion and
-cleanup survive restart. Commands are serialized; an incoming QR/network change
+cleanup survive restart. Commands are serialized; an incoming Tag/network change
 inhibits further preparation immediately, including a preparation in progress.
 Never schedule an Android alarm after its deadline. Keep exact alarm labels in
 SQLite before network I/O, for cleanup even after a timeout. API acceptance and
 physical phone execution are distinct; acceptance is never called a phone ACK.
 
 Console pages: Overview, Next wake-up, Routine (weekly schedule), Connection
-(credentials/device/QR pairing and sensor discovery), Home Wi-Fi, Sound,
+(credentials/device/NFC tag pairing and sensor discovery), Home Wi-Fi, Sound,
 Diagnostics (real tests and network test), History, System (autostart, deploy
 from Git checkout, backups, local support report). All edits validate before
 commit. Per-day override expires with its chosen date, even if away. Config and

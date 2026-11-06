@@ -54,3 +54,16 @@ async def test_report_redacts_network_and_token(tmp_path):
         async with c.post('http://localhost/action',json={'name':'report'}) as r:
             txt=await r.text(); assert 'never-output' not in txt
             assert 'token' not in txt
+
+async def test_captured_nfc_requires_explicit_save_and_can_be_cancelled(tmp_path):
+    async with api(tmp_path) as (c,e):
+        async with c.post('http://localhost/action',json={'name':'pair'}) as r: assert r.status==200
+        await e.on_event({'event_type':'tag_scanned','data':{'tag_id':'nfc-bathroom','device_id':'phone'}})
+        assert not e.cfg.qr_tag_id
+        async with c.post('http://localhost/action',json={'name':'save_pair'}) as r: assert r.status==200
+        assert e.files.load().qr_tag_id=='nfc-bathroom'
+        assert not e.db.meta('armed') and e.db.meta('test_passed') is None
+        async with c.post('http://localhost/action',json={'name':'pair'}) as r: assert r.status==200
+        async with c.post('http://localhost/action',json={'name':'cancel_pair'}) as r: assert r.status==200
+        async with c.post('http://localhost/action',json={'name':'save_pair'}) as r: assert r.status==400
+        assert e.files.load().qr_tag_id=='nfc-bathroom'
