@@ -36,10 +36,19 @@ async def test_every_page_renders(page,title):
         assert title in text
         assert 'Window too small' not in text
 
-async def test_next_preview_rounding_in_actual_console():
+async def test_next_preview_shows_confirmation_in_actual_console():
     async with console() as (c,p):
         c.next_date.text='2026-09-17'; c.next_time.text='07:10'; c.goto('next'); await asyncio.sleep(.1)
-        text=screen_text(c); assert '07:10' in text and '08:30' in text
+        text=screen_text(c); assert '07:10' in text and 'until tag confirmation' in text
+
+async def test_overview_shows_an_active_wake_waiting_for_tag():
+    async with console() as (c,p):
+        c.status_data['active_wake']={'date':'2026-09-16','start':'2026-09-16T05:55:00+02:00',
+                                      'next_ring':'2026-09-16T07:58:00+02:00','alarm_count':45}
+        c.app.invalidate()
+        await asyncio.sleep(.1)
+        text=screen_text(c)
+        assert 'AWAITING TAG' in text and 'Next ring 07:58' in text
 
 async def test_config_save_button_handler():
     async with console() as (c,p):
@@ -81,11 +90,11 @@ async def test_bad_time_preview_is_safe():
     async with console() as (c,p):
         c.next_time.text='bad'; assert 'Enter a valid' in c._next_preview()
 
-async def test_inline_preview_contains_last_alarm_without_truncation():
+async def test_inline_preview_contains_all_nine_sample_alarms():
     async with console(122,43) as (c,p):
         c.next_date.text='2026-09-17'; c.next_time.text='07:10'; c.goto('next')
         await asyncio.sleep(.1)
-        assert '08:29:50' in screen_text(c)
+        assert '07:17:50' in screen_text(c)
 
 async def test_connection_and_diagnostics_show_nfc_controls():
     async with console() as (c,p):

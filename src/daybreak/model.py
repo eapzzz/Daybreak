@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import date, datetime, time, timedelta, timezone
 import hashlib
 import json
+from math import floor
 import re
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -31,13 +32,10 @@ class Settings:
     timezone: str = 'Europe/Warsaw'
     alarm_package: str = 'com.google.android.deskclock'
     weekly: dict[str,str|None] = field(default_factory=lambda:{d:'05:55' for d in DAYS})
-    minimum_minutes: int = 60
-    round_minutes: int = 30
     dense_minutes: int = 15
     dense_step: int = 1
     sparse_minutes: int = 3
     lead_seconds: int = 10
-    restore_minutes: int = 15
     evening_enabled: bool = True
     evening_time: str = '22:00'
     loud_alarm: int = 7
@@ -55,6 +53,8 @@ class Settings:
 
     @classmethod
     def from_dict(cls, raw: dict) -> Settings:
+        # Older installations and backups include the former end-of-session settings.
+        raw={k:v for k,v in raw.items() if k not in ('minimum_minutes','round_minutes','restore_minutes')}
         allowed={f.name for f in fields(cls)}
         if set(raw)-allowed: raise ValueError('Unrecognized settings: '+', '.join(sorted(set(raw)-allowed)))
         s=cls(**raw); validate(s); return s
@@ -85,15 +85,13 @@ def validate(s: Settings) -> None:
     if not isinstance(s.weekly,dict) or set(s.weekly)!=set(DAYS): raise ValueError('Weekly routine must contain all seven weekdays.')
     for v in s.weekly.values():
         if v is not None: minutes(v)
-    limits={'minimum_minutes':(1,240),'dense_minutes':(0,120),'dense_step':(1,30),
-            'sparse_minutes':(1,60),'lead_seconds':(1,45),'restore_minutes':(0,120),
+    limits={'dense_minutes':(0,120),'dense_step':(1,30),
+            'sparse_minutes':(1,60),'lead_seconds':(1,45),
             'loud_alarm':(0,100),'loud_ring':(0,100),'normal_alarm':(0,100),'normal_ring':(0,100),
             'heartbeat_max_minutes':(1,1440),'refresh_seconds':(30,3600),'poll_seconds':(5,120)}
     for k,(lo,hi) in limits.items():
         v=getattr(s,k)
         if type(v) is not int or not lo<=v<=hi: raise ValueError(f'{k.replace("_"," ").title()} must be {lo}–{hi}.')
-    if s.round_minutes not in (15,30,60): raise ValueError('End rounding must be 15, 30 or 60 minutes.')
-    if s.dense_minutes>s.minimum_minutes: raise ValueError('Dense phase cannot exceed the minimum session length.')
     minutes(s.evening_time)
     if type(s.evening_enabled) is not bool: raise ValueError('Evening seed must be enabled or disabled.')
     if not isinstance(s.home_ssids,list) or any(not isinstance(x,str) or not x.strip() for x in s.home_ssids):
@@ -121,19 +119,53 @@ def valid_local(day: date, hhmm: str, tz: ZoneInfo) -> datetime:
 
 
 @dataclass(frozen=True)
+class Cadence:
+    dense_minutes: int
+    dense_step: int
+    sparse_minutes: int
+    timezone: str
+
+
+@dataclass(frozen=True)
 class Plan:
     day: str
     start: datetime
-    end: datetime
-    restore: datetime
+    end: datetime|None
+    restore: datetime|None
     rings: tuple[datetime,...]
     lead: int
     source: str
+    cadence: Cadence|None = None
+
+    def next_ring(self, after: float) -> datetime|None:
+        if self.cadence is None:
+            return next((ring for ring in self.rings if ring.timestamp()>after),None)
+        c=self.cadence
+        start=self.start.timestamp()
+        minute=max(0,floor((after-start)/60)+1)
+        dense=((minute+c.dense_step-1)//c.dense_step)*c.dense_step
+        if dense<=c.dense_minutes:
+            offset=dense
+        else:
+            later=max(1,(minute-c.dense_minutes+c.sparse_minutes-1)//c.sparse_minutes)
+            offset=c.dense_minutes+later*c.sparse_minutes
+        return datetime.fromtimestamp(start+offset*60,ZoneInfo(c.timezone))
 
     def public(self) -> dict:
-        return {'date':self.day,'start':self.start.isoformat(),'end':self.end.isoformat(),
-                'restore':self.restore.isoformat(),'source':self.source,'count':len(self.rings),
-                'alarms':[{'ring':t.isoformat(),'prepare':(t-timedelta(seconds=self.lead)).isoformat()} for t in self.rings]}
+        rings=self.rings
+        if self.cadence:
+            preview=[self.start]
+            for _ in range(8):
+                preview.append(self.next_ring(preview[-1].timestamp()))
+            rings=preview
+        result={'date':self.day,'start':self.start.isoformat(),'end':self.end.isoformat() if self.end else None,
+                'restore':self.restore.isoformat() if self.restore else None,'source':self.source,
+                'count':None if self.cadence else len(rings),
+                'alarms':[{'ring':t.isoformat(),
+                           'prepare':datetime.fromtimestamp(t.timestamp()-self.lead,t.tzinfo).isoformat()} for t in rings]}
+        if self.cadence:
+            result.update(cadence=asdict(self.cadence),lead_seconds=self.lead)
+        return result
 
     @property
     def fingerprint(self) -> str:
@@ -146,31 +178,15 @@ def plan_for(s:Settings, day:date, override:dict|None=None) -> Plan|None:
         hhmm=override.get('start'); source='One-time override'
     if hhmm is None: return None
     start=valid_local(day,hhmm,s.tz)
-    # End is rounded in wall-clock time, with no hidden shift of the start.
-    naive=start.replace(tzinfo=None)
-    minimum=naive+timedelta(minutes=s.minimum_minutes)
-    midnight=datetime.combine(minimum.date(),time())
-    m=minimum.hour*60+minimum.minute
-    end_naive=midnight+timedelta(minutes=((m+s.round_minutes-1)//s.round_minutes)*s.round_minutes)
-    dense_end=min(naive+timedelta(minutes=s.dense_minutes),end_naive)
-    times=set()
-    t=naive
-    while t<=dense_end:
-        times.add(localize(t,s.tz)); t+=timedelta(minutes=s.dense_step)
-    t=dense_end+timedelta(minutes=s.sparse_minutes)
-    while t<=end_naive:
-        times.add(localize(t,s.tz)); t+=timedelta(minutes=s.sparse_minutes)
-    end=localize(end_naive,s.tz); times.add(end)
-    rings=tuple(sorted(times,key=lambda t:t.timestamp()))
-    return Plan(day.isoformat(),start,end,localize(end_naive+timedelta(minutes=s.restore_minutes),s.tz),rings,s.lead_seconds,source)
+    cadence=Cadence(s.dense_minutes,s.dense_step,s.sparse_minutes,s.timezone)
+    return Plan(day.isoformat(),start,None,None,(),s.lead_seconds,source,cadence)
 
 
 def upcoming(s:Settings, now:datetime, override:dict|None=None, count:int=7) -> list[Plan]:
     plans=[]
-    # Include a crossing-midnight active session.
     for n in range(-1,15):
         p=plan_for(s,now.date()+timedelta(days=n),override)
-        if p and p.restore.timestamp()>now.timestamp(): plans.append(p)
+        if p and p.start.timestamp()>=now.timestamp()-60: plans.append(p)
         if len(plans)>=count: break
     return plans
 

@@ -66,10 +66,18 @@ def stamp(value,seconds=False):
 
 def plan_text(p:dict|None)->str:
     if not p: return 'No wake-up scheduled.'
-    lines=[f"{p['date']}   {stamp(p['start'])} → {stamp(p['end'])}   {p['count']} alarms",
-           f"Daytime volume: {stamp(p['restore'])}   •   {p['source']}",
-           '', ' PREPARE    RING       PREPARE    RING       PREPARE    RING',
-           ' ───────────────────────────────────────────────────────────']
+    c=p.get('cadence')
+    if c:
+        initial=(f"First {c['dense_minutes']} min: every {c['dense_step']} min. " if c['dense_minutes'] else '')
+        lines=[f"{p['date']}  ·  First ring {stamp(p['start'])}  ·  {p['source']}",
+               f"{initial}Then every {c['sparse_minutes']} min until tag confirmation." if initial
+               else f"Every {c['sparse_minutes']} min until tag confirmation.",
+               'Daytime volume returns after confirmation.', '', ' FIRST ALARMS']
+    else:
+        lines=[f"{p['date']}  ·  {stamp(p['start'])} → {stamp(p['end'])}  ·  {p['count']} alarms",
+               f"Daytime volume: {stamp(p['restore'])}  ·  {p['source']}", '']
+    lines.extend([' PREPARE    RING       PREPARE    RING       PREPARE    RING',
+                  ' ───────────────────────────────────────────────────────────'])
     rows=[f" {stamp(x['prepare'],True)}   {stamp(x['ring'])} " for x in p['alarms']]
     for i in range(0,len(rows),3): lines.append('  '.join(rows[i:i+3]))
     return '\n'.join(lines)
@@ -146,7 +154,7 @@ class Console:
     def _build_pages(self):
         pages={}
         overview=HSplit([
-            VSplit([Frame(plain(self._next_card,4),title='NEXT WAKE-UP'),
+            VSplit([Frame(plain(self._next_card,4),title='WAKE-UP'),
                     Frame(plain(self._status_card,4),title='SERVICE')],padding=2),gap(),
             Frame(plain(self._home_card,3),title='HOME NETWORK'),gap(),
             buttons(self.button('Set next wake-up',self._goto_next),self.button('Preview series',self.preview_current),
@@ -161,17 +169,13 @@ class Console:
             VSplit([nd,nt],padding=4),gap(),
             buttons(self.button('Preview',self.preview_next),self.button('Save for this date',self.save_next),
                     self.button('Use routine again',self.clear_next)),gap(),
-            Frame(plain(self._next_preview,lambda:len(self._next_preview().splitlines())),title='LIVE PREVIEW'),gap(),
-            plain('The window lasts at least one hour and ends at the next half-hour boundary.\n'
-                  'The date-specific override expires automatically; your routine is unchanged.',2,'class:muted'))
+            Frame(plain(self._next_preview,lambda:len(self._next_preview().splitlines())),title='LIVE PREVIEW'))
         self.weekly={}; weekday_cols=[]
         for day in DAYS:
             area,box=field(day.upper(),'05:55',width=6); self.weekly[day]=area; weekday_cols.append(box)
         self.routine_fields={}; numeric=[]
-        for name,label in [('minimum_minutes','Minimum duration (min)'),('round_minutes','Round end to (min)'),
-                           ('dense_minutes','Dense phase (min)'),('dense_step','Dense interval (min)'),
-                           ('sparse_minutes','Later interval (min)'),('lead_seconds','Preparation lead (sec)'),
-                           ('restore_minutes','Restore after end (min)')]:
+        for name,label in [('dense_minutes','Initial phase (min)'),('dense_step','Initial interval (min)'),
+                           ('sparse_minutes','Interval until tag (min)'),('lead_seconds','Preparation lead (sec)')]:
             area,box=field(label,getattr(self.cfg,name)); self.routine_fields[name]=area; numeric.append(box)
         self.evening=Checkbox(text='Prepare one alarm the evening before',checked=True)
         self.evening_time,et=field('Evening preparation time','22:00',width=18)
@@ -180,7 +184,7 @@ class Console:
         pages['routine']=self.page('Routine','Weekly first-ring times. Leave a day blank to leave it unscheduled.',
             VSplit(weekday_cols,padding=1),gap(),*rows,self.evening,gap(),et,gap(),
             buttons(self.button('Save routine',self.save_routine),self.button('Reload saved',self.reload_fields)),gap(),
-            plain('A running session keeps its existing time plan. Future plans and evening seeds are reconciled.',2,'class:muted'))
+            plain('The alarms repeat until tag confirmation. Changes to intervals apply to future wake-ups.',2,'class:muted'))
         self.url,url=field('Home Assistant base URL','')
         self.token,token=field('Long-lived token  ·  masked; leave blank to keep the stored token','',password=True)
         self.notify_field,nf=field('Notification action','')
@@ -243,13 +247,25 @@ class Console:
         return pages
 
     def _next_card(self):
+        wake=self.status_data.get('active_wake')
+        if wake:
+            next_ring=wake.get('next_ring')
+            if self.status_data.get('pending_cleanup'):
+                next_line='  Waiting for alarm cleanup.'
+            elif next_ring:
+                next_line=f"  Next ring {stamp(next_ring)}"
+            else:
+                next_line='  Waiting for home Wi-Fi.'
+            return FormattedText([('class:accent','  AWAITING TAG\n'),
+                                  ('',f"  Started {wake['date']} at {stamp(wake['start'])}\n{next_line}\n"),
+                                  ('class:muted',f"  Alarms tracked: {wake['alarm_count']}")])
         p=next(iter(self.status_data.get('plans',[])),None)
         if not p: return '  No scheduled morning.\n  Configure Routine or Next wake-up.'
         now=parse_timestamp(self.status_data.get('now'))
         start=parse_timestamp(p['start']); secs=max(0,int((start-now).total_seconds())) if now and start else 0
         hours,secs=divmod(secs,3600); mins,_=divmod(secs,60)
-        return FormattedText([('class:accent',f"  {stamp(p['start'])}  →  {stamp(p['end'])}\n"),
-                              ('',f"  {p['date']}  ·  {p['count']} alarms\n"),
+        return FormattedText([('class:accent',f"  First ring {stamp(p['start'])}\n"),
+                              ('',f"  {p['date']}  ·  Until tag confirmation\n"),
                               ('class:muted',f"  Starts in {hours:02d}h {mins:02d}m\n  {p['source']}")])
     def _status_card(self):
         s=self.status_data; net=s.get('network',{}).get('state','Unknown')
@@ -264,9 +280,11 @@ class Console:
                               ('class:muted',f"  {n.get('reason','Connect Home Assistant to see phone network reports.')}\n"),
                               ('class:muted',f"  SSID reported: {n.get('ssid_reported') or 'not provided'}")])
     def _agenda(self):
-        lines=['  DATE          FIRST     LAST       ALARMS    SOURCE','  ───────────────────────────────────────────────────────────']
+        lines=['  DATE          FIRST RING   SOURCE','  ──────────────────────────────────────────']
+        active=self.status_data.get('active_wake') or {}
         for p in self.status_data.get('plans',[])[:7]:
-            lines.append(f"  {p['date']}    {stamp(p['start'])}     {stamp(p['end'])}       {p['count']:2}      {p['source']}")
+            if p['date']!=active.get('date'):
+                lines.append(f"  {p['date']}    {stamp(p['start'])}        {p['source']}")
         return '\n'.join(lines)
     def _checklist(self):
         checks=[('Connection',bool(self.cfg.ha_url and self.token_set)),('Phone + tag',bool(self.cfg.notify_service and self.cfg.qr_tag_id and self.cfg.qr_device_id)),
@@ -277,7 +295,7 @@ class Console:
         try:
             d=date.fromisoformat(self.next_date.text.strip()); p=plan_for(self.cfg,d,{'date':str(d),'start':self.next_time.text.strip()})
             return plan_text(p.public())
-        except (ValueError,TypeError): return 'Enter a valid date and HH:MM time to preview the complete series.'
+        except (ValueError,TypeError): return 'Enter a valid date and HH:MM time to preview the first alarms.'
     def _pair_status(self):
         s=self.status_data
         if s.get('paired'):
@@ -420,7 +438,7 @@ class Console:
         await self.show_text('One-time wake-up preview',plan_text(p))
     async def save_next(self):
         p=await self.control.action('preview',date=self.next_date.text.strip(),start=self.next_time.text.strip())
-        if await self.confirm('Save next wake-up',f"{p['date']}\nFirst ring: {stamp(p['start'])}  ·  Last ring: {stamp(p['end'])}\n{p['count']} alarms. Your weekly routine is unchanged."):
+        if await self.confirm('Save next wake-up',f"{p['date']}\nFirst ring {stamp(p['start'])}. The alarms repeat until tag confirmation."):
             await self.control.action('set_override',override={'date':p['date'],'start':self.next_time.text.strip()})
             self.toast('Next wake-up saved. Previous evening seed will be reconciled.')
     async def clear_next(self):
@@ -467,11 +485,13 @@ class Console:
         if selected and await self.confirm('Restore settings',f'Restore {selected}?\nThe stored token is unchanged.'):
             self.load_fields(await self.control.action('restore_backup',file=selected)); self.toast('Configuration restored.')
     async def morning_summary(self):
-        lines=['DATE        FIRST   END     ALARMS   RESULT', '────────────────────────────────────────────────────────────']
+        lines=['DATE        FIRST   COMPLETED     ALARMS  RESULT', '──────────────────────────────────────────────────────────────']
         for r in self.status_data.get('sessions',[]):
             if r['kind']!='real': continue
             p=r['plan']
-            lines.append(f"{p['date']}  {stamp(p['start'])}   {stamp(p['end'])}      {r.get('alarm_count',0):2}    {r.get('reason') or 'Scheduled / active'}")
+            completed=parse_timestamp(r.get('completed_at'))
+            when=completed.astimezone(self.cfg.tz).strftime('%m-%d %H:%M') if completed else '—'
+            lines.append(f"{p['date']}  {stamp(p['start'])}   {when:11}   {r.get('alarm_count',0):4}  {r.get('reason') or 'Scheduled / active'}")
         if len(lines)==2: lines.append('No real morning has run yet.')
         await self.show_text('Morning history', '\n'.join(lines))
 

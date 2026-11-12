@@ -6,20 +6,28 @@ from daybreak.model import Settings, plan_for, network_status, validate, valid_l
 D = date(2026, 9, 17)
 TZ = ZoneInfo('Europe/Warsaw')
 
-@pytest.mark.parametrize('start,end', [('05:55','07:00'),('07:00','08:00'),('07:10','08:30'),('07:30','08:30'),('23:40','01:00')])
-def test_exact_first_and_rounded_end(start,end):
-    s=Settings(); p=plan_for(s,D,{'date':D.isoformat(),'start':start})
-    assert p.start.strftime('%H:%M') == start
-    assert p.end.strftime('%H:%M') == end
-    assert p.rings[0] == p.start and p.rings[-1] == p.end
-    assert p.restore == p.end + timedelta(minutes=15)
+@pytest.mark.parametrize('start', ['05:55','07:00','07:10','07:30','23:40'])
+def test_exact_first_with_no_end(start):
+    p=plan_for(Settings(),D,{'date':D.isoformat(),'start':start})
+    assert p.start.strftime('%H:%M')==start
+    assert p.next_ring(p.start.timestamp()-1)==p.start
+    assert p.end is p.restore is None
+    preview=p.public()
+    assert preview['count'] is None and len(preview['alarms'])==9
 
 def test_default_sequence():
     p=plan_for(Settings(),D)
-    assert len(p.rings)==33
-    assert [t.strftime('%H:%M') for t in p.rings[:16]] == [f'05:{m:02d}' for m in range(55,60)]+[f'06:{m:02d}' for m in range(11)]
-    assert p.rings[16].strftime('%H:%M')=='06:13'
-    assert p.rings[-2].strftime('%H:%M')=='06:58'
+    first=p.start.timestamp()
+    assert [p.next_ring(first+60*m-1).strftime('%H:%M') for m in range(16)] == [
+        f'05:{m:02d}' for m in range(55,60)]+[f'06:{m:02d}' for m in range(11)]
+    assert p.next_ring(first+15*60).strftime('%H:%M')=='06:13'
+    assert p.next_ring(first+120*60).strftime('%H:%M')=='07:58'
+    assert p.next_ring(first+24*3600).date()==D+timedelta(days=1)
+
+def test_old_duration_settings_load_without_limiting_the_cadence():
+    cfg=Settings.from_dict({'minimum_minutes':60,'round_minutes':30,'restore_minutes':15,'dense_minutes':90})
+    assert cfg.dense_minutes==90
+    assert 'minimum_minutes' not in cfg.to_dict()
 
 def test_override_only_selected_day():
     s=Settings(); o={'date':D.isoformat(),'start':'07:30'}
@@ -31,7 +39,7 @@ def test_disabled_weekday_override():
     assert plan_for(s,D) is None
     assert plan_for(s,D,{'date':str(D),'start':'08:00'}) is not None
 
-@pytest.mark.parametrize('change',[{'lead_seconds':0},{'lead_seconds':60},{'dense_minutes':-1},{'ha_url':'http://a:b@home/'},{'timezone':'fake/zone'},{'minimum_minutes':0},{'round_minutes':7},{'sparse_minutes':0}])
+@pytest.mark.parametrize('change',[{'lead_seconds':0},{'lead_seconds':60},{'dense_minutes':-1},{'ha_url':'http://a:b@home/'},{'timezone':'fake/zone'},{'sparse_minutes':0}])
 def test_invalid_config(change):
     s=Settings(); s.__dict__.update(change)
     with pytest.raises(ValueError): validate(s)

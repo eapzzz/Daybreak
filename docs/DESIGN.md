@@ -1,8 +1,7 @@
 # Daybreak design
 
-Approved behavior: an exact first alarm, at least 60 wall-clock minutes, with the
-end rounded UP to a 30-minute boundary. Default 05:55 → 07:00; 07:10 → 08:30.
-First 15 minutes every minute, then every 3 minutes and a final end alarm.
+The first alarm rings at the scheduled time. By default it repeats every minute
+for the first 15 minutes, then every 3 minutes until tag confirmation.
 Prepare each alarm and volume at the configured preparation lead (default 10 seconds); no full-minute volume tick.
 An evening seed uses the exact first alarm of the next scheduled day.
 
@@ -19,8 +18,9 @@ REST fetching does NOT make an unchanged phone report fresh. An optional phone
 heartbeat sensor can impose freshness without expiring unchanged Wi-Fi names.
 No public IP rule. No secret or household identifiers in the repository.
 
-Tag matches tag and device IDs. It ends today's real session, not tomorrow's seed.
-A test has an independent scope and never completes a real day. Completion and
+Tag matches tag and device IDs. It completes the active wake-up, including a
+later scheduled start that passed while it was active. Future starts keep their
+own date. A test has an independent scope. Wake-up state, completion and
 cleanup survive restart. Commands are serialized; an incoming Tag/network change
 inhibits further preparation immediately, including a preparation in progress.
 Never schedule an Android alarm after its deadline. Keep exact alarm labels in

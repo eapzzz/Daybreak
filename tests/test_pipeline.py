@@ -36,7 +36,8 @@ async def test_phone_event_to_durable_cleanup_through_real_transports(tmp_path,c
             try:
                 console=Control(socket)
                 assert (await console.status())['network']['state']=='Home'
-                assert (await console.action('preview',date='2026-09-18',start='07:10'))['end'][11:16]=='08:30'
+                preview=await console.action('preview',date='2026-09-18',start='07:10')
+                assert preview['start'][11:16]=='07:10' and preview['end'] is None
                 await engine.tick(); assert not seen
                 clock[0]+=timedelta(seconds=1); await engine.tick()
                 assert len(seen)==4

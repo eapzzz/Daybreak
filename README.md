@@ -12,14 +12,13 @@ Assistant automation. Your normal Home Assistant controls remain separate.
 ## What it does
 
 - Exact first-ring times. No hidden five-minute offset.
-- At least one hour, rounded **up** to the next half-hour: **07:10 → 08:30**.
-- Dense first phase, then spaced alarms; a final alarm at the exact end.
+- Alarms repeat until tag confirmation, with an initial phase and a configurable later interval.
 - Alarm creation and loud-volume commands begin **the configured preparation lead before each ring**.
 - **Home Wi-Fi only:** both the reported SSID and BSSID must match your approved
   networks. Away/Unknown inhibit new wake-up commands and queue cleanup.
 - The same Wi-Fi rule covers the optional evening alarm.
 - Pair a Home Assistant NFC tag by tapping it with your phone. Completion is
-  durable, local, date-scoped and independent of HA helper values.
+  durable and applies to the active wake-up, even after midnight.
 - A one-time next wake-up, weekly routine, live previews, phone/network tests,
   history, service administration, Git deployment and backups — in the console.
 - No browser UI, cloud account, inbound TCP control port or Docker socket access.
@@ -166,18 +165,15 @@ Default settings:
 | Setting | Default |
 |---|---|
 | Weekly first alarm | 05:55, every day |
-| Minimum duration | 60 minutes |
-| Round end up to | 30-minute boundary |
 | Dense phase | First 15 minutes, every minute |
 | Later phase | Every 3 minutes |
 | Preparation lead | 10 seconds |
-| Daytime volume | 15 minutes after the end, or after tag confirmation |
+| Daytime volume restored | After tag confirmation |
 | Evening preparation | 22:00, one alarm at the next day's exact first-ring time |
 | Wake-up volume | Alarm 7, ring 7 |
 | Daytime volume | Alarm 4, ring 3 |
 | Time zone | Europe/Warsaw |
 
-**05:55 → 07:00**, **07:00 → 08:00**, **07:10 → 08:30**, **07:30 → 08:30**.
 The preparation lead is configurable from 1 to 45 seconds. Existing saved
 settings retain their value until changed in **F3 · Routine**. The setting is a
 server dispatch window, not a guaranteed phone-delivery time: REST, Companion and
@@ -187,15 +183,16 @@ late. A live one-second test rolled an alarm to the following day when Clock pro
 it too late, so the fresh-install default remains 10 seconds. Shorter values need
 a real phone test before relying on them.
 
-The first ring is exactly the entered time. End rounding is applied *after*
-adding the minimum duration. The final end alarm is always included. Dense phase
-includes the first ring and the ring at +15 minutes; the later phase starts at
-+18 minutes with the defaults. The dense phase and all intervals are editable.
+The first ring is at the entered time. With the defaults, the initial phase
+includes the first ring and the ring at +15 minutes. The later phase starts
+at +18 minutes and repeats until tag confirmation. The intervals are editable.
+An unfinished wake-up remains active across midnight. If a later day's start
+passes while it is active, both dates are covered by the same confirmation.
 
-**F2 · Next wake-up** changes one explicit date. Its preview shows every prepare
-and ring time before saving. It does not move to another date if that morning is
-skipped because the phone is away. **F3 · Routine** edits the default weekdays;
-a blank weekday means no regular wake-up on that day.
+**F2 · Next wake-up** changes one explicit date. Its preview shows the first
+nine preparation and ring times plus the repeat cadence. **F3 · Routine** edits
+the default weekdays. A blank weekday leaves that day unscheduled. Overview
+shows whether a wake-up is waiting for its tag and when the next alarm is due.
 
 An existing evening alarm is reconciled when a future plan changes: the old
 tracked alarm is cancelled before a replacement is created. A session already
@@ -245,9 +242,8 @@ sensor adds an age check. Verify transitions with your actual phone before
 relying on home-only behavior. Cleanup is retained for retry if transport fails;
 HA accepting a request is not proof of phone execution.
 
-Returning Home within an unfinished session allows future slots again after
-cleanup. Expired slots are not replayed. A morning that was observed throughout
-its window but had no alarms while Away/Unknown is recorded as skipped.
+An unfinished wake-up waits for the tag during Away/Unknown. Returning Home
+allows future alarms after pending cleanup. Expired alarm times are skipped.
 
 ## Console pages
 
@@ -255,7 +251,7 @@ its window but had no alarms while Away/Unknown is recorded as skipped.
 |---|---|
 | Overview | Next session, service/network readiness, coming-up list, shortcuts |
 | Next wake-up | Date/time, live timeline, one-date override and routine reset |
-| Routine | All weekdays, density, spacing, length, rounding, lead, evening seed |
+| Routine | All weekdays, initial phase, repeat intervals, preparation lead, evening seed |
 | Connection | URL, masked token, notification picker, clock package, timezone, NFC tag pairing |
 | Home Wi-Fi | Sensor pickers, SSID/BSSID lists, current-network capture, polling/refresh |
 | Sound | Four volume levels and live test |

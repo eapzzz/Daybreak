@@ -62,7 +62,8 @@ from daybreak.tui import Console, DemoControl
 from prompt_toolkit.input import DummyInput
 from prompt_toolkit.output import DummyOutput
 p=plan_for(Settings(),date(2026,9,17),{'date':'2026-09-17','start':'07:10'})
-assert p.start.strftime('%H:%M')=='07:10' and p.end.strftime('%H:%M')=='08:30'
+assert p.start.strftime('%H:%M')=='07:10' and p.end is None
+assert p.next_ring(p.start.timestamp()+7200)>p.start
 assert len(Console(DemoControl(),input=DummyInput(),output=DummyOutput(),demo=True).views)==9
 print('Package import, schedule and console composition checks passed.')
 PY

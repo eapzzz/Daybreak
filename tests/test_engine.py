@@ -183,12 +183,62 @@ async def test_network_test_completes_without_marking_morning_done(engine):
     assert e.accept_test()['message']=='Test confirmed.'
     assert e.db.session('wake:2026-09-17') is None
 
-async def test_away_morning_is_recorded_as_skipped(engine):
-    e,c,h=engine; h.states['sensor.wifi']['state']='Other'; c.now+=timedelta(seconds=1)
-    await e.tick(); c.now=c.now.replace(hour=7,minute=15,second=0); await e.tick()
-    r=e.db.session('wake:2026-09-17')
-    assert r is not None and r['completed'] and r['reason']=='Skipped: away or network unknown'
+async def test_away_pauses_and_home_resumes_after_the_former_end(engine):
+    e,c,h=engine
+    h.states['sensor.wifi']['state']='Other'
+    c.now+=timedelta(seconds=1)
+    await e.tick()
+    c.now=c.now.replace(hour=8,minute=0,second=50)
+    await e.tick()
+    assert e.status()['active_wake']['next_ring'] is None
     assert not creates(h) and not volumes(h)
+    h.states['sensor.wifi']['state']='HomeWiFi'
+    await e.tick()
+    assert len(creates(h))==1
+    assert 'MINUTES:1:int' in creates(h)[0]['data']['intent_extras']
+
+async def test_wake_continues_across_midnight_and_restart_until_tag(engine):
+    e,c,h=engine
+    c.now+=timedelta(seconds=1)
+    await e.tick()
+    assert len(creates(h))==1
+    await e.configure({'sparse_minutes':5})
+    c.now+=timedelta(days=1,hours=2)
+    e=Engine(e.files,e.db,h,c)
+    await e.tick()
+    assert len(creates(h))==2
+    assert e.status()['active_wake']['date']=='2026-09-17'
+    assert e.db.session('wake:2026-09-18') is None
+
+    await qr(e)
+    await e.tick()
+    c.now+=timedelta(minutes=3)
+    await e.tick()
+    assert e.status()['active_wake'] is None and len(creates(h))==2
+    assert [e.db.session('wake:'+day)['reason'] for day in ('2026-09-17','2026-09-18')]==['Tag','Tag']
+    assert any(p['data']['command']==4 for p in volumes(h))
+
+    c.now=(c.now+timedelta(days=1)).replace(hour=5,minute=54,second=50)
+    await e.tick()
+    assert e.status()['active_wake']['date']=='2026-09-19'
+    assert len(creates(h))==3
+
+async def test_in_progress_legacy_wake_is_upgraded_without_replaying_alarms(engine):
+    e,c,h=engine
+    start=c.now.replace(hour=5,minute=55,second=0)
+    end=start+timedelta(minutes=65)
+    legacy={'date':'2026-09-17','start':start.isoformat(),'end':end.isoformat(),
+            'restore':(end+timedelta(minutes=15)).isoformat(),'source':'Weekly routine','count':1,
+            'alarms':[{'ring':start.isoformat(),'prepare':(start-timedelta(seconds=10)).isoformat()}]}
+    sid='wake:2026-09-17'
+    e.db.ensure_session(sid,legacy)
+    e.db.loud(sid,e.cfg)
+    c.now=c.now.replace(hour=8,minute=0,second=50)
+    e=Engine(e.files,e.db,h,c)
+    await e.tick()
+    assert len(creates(h))==1
+    assert e.db.session(sid)['plan']['end'] is None
+    assert e.status()['active_wake']['date']=='2026-09-17'
 
 async def test_old_pending_volume_restore_is_not_lost_to_history_limit(engine):
     e,c,h=engine

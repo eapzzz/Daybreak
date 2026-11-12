@@ -73,6 +73,8 @@ class Store:
                 notify_service TEXT NOT NULL,package TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'recorded',prepared INTEGER NOT NULL DEFAULT 0,
                 last_attempt TEXT,seed INTEGER NOT NULL DEFAULT 0);
+            CREATE INDEX IF NOT EXISTS alarms_by_session ON alarms(session);
+            CREATE INDEX IF NOT EXISTS alarms_pending_due ON alarms(due DESC) WHERE status='cancel_pending';
             CREATE TABLE IF NOT EXISTS events(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,at TEXT NOT NULL,
                 level TEXT NOT NULL,message TEXT NOT NULL);
@@ -99,11 +101,18 @@ class Store:
             'SELECT id FROM sessions WHERE completed=0 OR needs_normal=1 ORDER BY created')]
     def replace_plan(self,sid:str,plan:dict):
         with self.db: self.db.execute('UPDATE sessions SET plan=? WHERE id=?',(json.dumps(plan),sid))
+    def start_wake(self,sid:str,plan:dict):
+        with self.db:
+            self.db.execute('''INSERT INTO sessions(id,kind,plan,created) VALUES (?,'real',?,?)
+                ON CONFLICT(id) DO UPDATE SET plan=excluded.plan WHERE sessions.completed=0''',
+                (sid,json.dumps(plan),datetime.now(timezone.utc).isoformat()))
+            self.db.execute("INSERT OR REPLACE INTO metadata VALUES ('active_wake',?)",(json.dumps(sid),))
     def complete(self,sid:str,reason:str):
         with self.db:
             self.db.execute('UPDATE sessions SET completed=1,reason=?,completed_at=? WHERE id=?',
                             (reason,datetime.now(timezone.utc).isoformat(),sid))
             self.db.execute("UPDATE alarms SET status='cancel_pending' WHERE session=? AND status!='cancelled'",(sid,))
+            self.db.execute("DELETE FROM metadata WHERE key='active_wake' AND value=?",(json.dumps(sid),))
     def loud(self,sid:str,s:Settings):
         with self.db:
             self.db.execute('UPDATE sessions SET needs_normal=1,normal_service=?,normal_alarm=?,normal_ring=? WHERE id=?',
@@ -122,6 +131,14 @@ class Store:
         sql='SELECT * FROM alarms'; args=()
         if sid: sql+=' WHERE session=?'; args=(sid,)
         return [dict(r) for r in self.db.execute(sql+' ORDER BY due DESC',args)]
+    def pending_alarms(self):
+        return [dict(r) for r in self.db.execute("SELECT * FROM alarms WHERE status='cancel_pending' ORDER BY due DESC")]
+    def pending_cleanup(self,sid:str|None=None)->int:
+        sql="SELECT COUNT(*) FROM alarms WHERE status='cancel_pending'"
+        if sid: return self.db.execute(sql+' AND session=?',(sid,)).fetchone()[0]
+        return self.db.execute(sql).fetchone()[0]
+    def has_tracked_alarms(self)->bool:
+        return self.db.execute("SELECT 1 FROM alarms WHERE status!='cancelled' LIMIT 1").fetchone() is not None
     def sent(self,label:str,prepared:bool=False):
         with self.db:
             # A concurrent tag/network event takes priority over late API success.

@@ -1,12 +1,10 @@
 """The only scheduler. The terminal is a client, never the clock."""
 from __future__ import annotations
 import asyncio
-from datetime import datetime, date, timedelta, timezone
-import json
+from datetime import datetime, date, timedelta
 import uuid
-from dataclasses import asdict
 from typing import Callable
-from .model import Settings, Plan, upcoming, plan_for, network_status, valid_local, parse_timestamp
+from .model import Cadence, Settings, Plan, upcoming, plan_for, network_status, valid_local, parse_timestamp
 from .store import Store, SettingsFiles
 from .ha import HomeAssistant, HAError, alarm_payload, dismiss_payload, command
 
@@ -14,10 +12,13 @@ DISPATCH_MARGIN=.05
 
 
 def read_plan(raw:dict) -> Plan:
-    return Plan(raw['date'],datetime.fromisoformat(raw['start']),datetime.fromisoformat(raw['end']),
-                datetime.fromisoformat(raw['restore']),tuple(datetime.fromisoformat(x['ring']) for x in raw['alarms']),
-                int((datetime.fromisoformat(raw['alarms'][0]['ring'])-datetime.fromisoformat(raw['alarms'][0]['prepare'])).total_seconds()),
-                raw['source'])
+    start=datetime.fromisoformat(raw['start'])
+    if 'cadence' in raw:
+        return Plan(raw['date'],start,None,None,(),raw['lead_seconds'],raw['source'],Cadence(**raw['cadence']))
+    first=raw['alarms'][0]
+    lead=int(datetime.fromisoformat(first['ring']).timestamp()-datetime.fromisoformat(first['prepare']).timestamp())
+    return Plan(raw['date'],start,parse_timestamp(raw['end']),parse_timestamp(raw['restore']),
+                tuple(datetime.fromisoformat(x['ring']) for x in raw['alarms']),lead,raw['source'])
 
 
 class Engine:
@@ -31,6 +32,7 @@ class Engine:
             r=self.db.session(self.test_id)
             if r and not r['completed']: self.db.complete(self.test_id,'Interrupted test')
         self.services_cache=[]; self.event_count=0
+        self._resume_legacy_wake()
     def now(self): return self.clock().astimezone(self.cfg.tz)
     def connected(self): return bool(self.ha and self.ha.ready.is_set())
     def network(self):
@@ -38,21 +40,66 @@ class Engine:
     def note(self,message:str,level:str='INFO'):
         self.db.event(level,message)
         if level=='ERROR': self.last_error=message
-    def _session_plan(self,p:Plan)->Plan:
-        sid='wake:'+p.day; existing=self.db.session(sid)
-        if existing and not existing['completed']:
-            saved=read_plan(existing['plan'])
-            if saved.start.timestamp()<=self.now().timestamp()<saved.restore.timestamp(): return saved
-        return p
+    def _resume_legacy_wake(self):
+        if not self.db.meta('armed',False) or self.active_wake(): return
+        now=self.now().timestamp()
+        for row in self.db.work_sessions():
+            if row['kind']!='real' or row['completed']: continue
+            restore=parse_timestamp(row['plan'].get('restore'))
+            start=datetime.fromisoformat(row['plan']['start'])
+            if restore and start.timestamp()-self.cfg.lead_seconds<=now and (now<restore.timestamp() or row['needs_normal']):
+                old=read_plan(row['plan'])
+                cfg=self.cfg
+                cadence=Cadence(cfg.dense_minutes,cfg.dense_step,cfg.sparse_minutes,cfg.timezone)
+                rolling=Plan(old.day,old.start,None,None,(),old.lead,old.source,cadence)
+                self.db.start_wake(row['id'],rolling.public())
+                return
+
+    def active_wake(self):
+        sid=self.db.meta('active_wake')
+        row=self.db.session(sid) if sid else None
+        if row and not row['completed']:
+            return sid,read_plan(row['plan'])
+        return None
+
     def plans(self,count=7):
-        return [self._session_plan(p) for p in upcoming(self.cfg,self.now(),self.db.meta('override'),count)]
+        active=self.active_wake()
+        plans=[active[1]] if active else []
+        for p in upcoming(self.cfg,self.now(),self.db.meta('override'),count+1):
+            if active and p.day==active[1].day: continue
+            row=self.db.session('wake:'+p.day)
+            if not row or not row['completed']: plans.append(p)
+        return plans[:count]
+
     def _ensure(self,p:Plan,kind='real',sid=None)->str:
         sid=sid or 'wake:'+p.day
-        self.db.ensure_session(sid,p.public(),kind)
+        plan=p.public()
+        self.db.ensure_session(sid,plan,kind)
         existing=self.db.session(sid)
-        if existing['plan']!=p.public() and not existing['completed']:
-            self.db.replace_plan(sid,p.public())
+        if existing['plan']!=plan and not existing['completed']:
+            self.db.replace_plan(sid,plan)
         return sid
+
+    def _activate(self,p:Plan)->None:
+        sid='wake:'+p.day
+        self.db.start_wake(sid,p.public())
+        self.note('Wake-up started. Repeating until the wake-up tag is scanned.')
+
+    def _start_due_wake(self,now:datetime)->None:
+        for p in self.plans():
+            delta=p.start.timestamp()-now.timestamp()
+            if -60<=delta<=p.lead:
+                self._activate(p)
+                return
+        # The evening seed may have rung while the scheduler was stopped.
+        p=plan_for(self.cfg,now.date(),self.db.meta('override'))
+        if p and p.start.timestamp()<=now.timestamp():
+            sid='wake:'+p.day
+            row=self.db.session(sid)
+            seed=self.db.alarm(self._label(sid,p.start))
+            if row and not row['completed'] and seed and seed['status']=='sent':
+                self._activate(p)
+
     def _active_test(self):
         r=self.db.session(self.test_id) if self.test_id else None
         return r if r and not r['completed'] else None
@@ -67,34 +114,43 @@ class Engine:
         return min(maximum,remaining)
     def _label(self,sid:str,due:datetime)->str:
         suffix='_'+sid.split(':',1)[1][:8] if sid.startswith('test:') else ''
-        return 'Daybreak_'+due.strftime('%Y%m%d_%H%M')+suffix
+        fold='_fold1' if due.fold else ''
+        return 'Daybreak_'+due.strftime('%Y%m%d_%H%M')+fold+suffix
 
     async def on_event(self,event:dict):
         if event.get('event_type')!='tag_scanned': return
         data=event.get('data',{})
-        if self.pair_until>self.now().timestamp():
+        active=self.active_wake()
+        test=self._active_test()
+        if not active and not test and self.pair_until>self.now().timestamp():
             if data.get('tag_id') and data.get('device_id'):
                 self.paired={'tag_id':str(data['tag_id']),'device_id':str(data['device_id'])}
                 self.pair_until=0; self.note('Tag captured. Review and save it from Connection to pair.')
             return
+        if not self.cfg.qr_tag_id or not self.cfg.qr_device_id: return
         if data.get('tag_id')!=self.cfg.qr_tag_id or data.get('device_id')!=self.cfg.qr_device_id: return
         now=self.now(); self.db.set_meta('last_tag',now.isoformat())
         # Retain the legacy metadata/status contract for existing HA bridges.
         self.db.set_meta('last_qr',now.isoformat())
-        test=self._active_test()
-        if test: scopes=[test['id']]
+        if test:
+            scopes=[test['id']]
         else:
-            scopes=[]
-            for p in self.plans():
-                if p.start.timestamp()<=now.timestamp()<=p.restore.timestamp(): scopes.append(self._ensure(p))
-            if not scopes:
-                p=plan_for(self.cfg,now.date(),self.db.meta('override'))
-                if p: scopes=[self._ensure(p)]
+            scopes=[active[0]] if active else []
+            today=plan_for(self.cfg,now.date(),self.db.meta('override'))
+            # A later scheduled start that passed during an ongoing wake-up
+            # belongs to the same wake-up. Future days still have their own start.
+            if today and (not active or today.start.timestamp()<=now.timestamp()):
+                sid='wake:'+today.day
+                row=self.db.session(sid)
+                if sid not in scopes and not (row and row['completed']):
+                    scopes.append(self._ensure(today))
         # No await before durable inhibition: a tag arriving during a REST call wins.
         for sid in scopes:
-            self.db.complete(sid,'Tag'); self.note('Wake-up tag accepted. '+('Test finished.' if sid.startswith('test:') else 'Today is complete.'))
+            self.db.complete(sid,'Tag'); self.note('Wake-up tag accepted. '+('Test finished.' if test else 'Wake-up complete.'))
 
     def begin_pairing(self):
+        if self.active_wake() or self._active_test():
+            raise ValueError('Finish the running wake-up or phone test before pairing a tag.')
         self.paired=None; self.pair_until=self.now().timestamp()+120
         return {'message':'Hold your phone near the bathroom NFC tag within two minutes. Review the captured identifiers before saving.'}
 
@@ -113,30 +169,29 @@ class Engine:
                     if t and t['kind']=='network-test' and self.last_network=='Home' and self.db.count(t['id']):
                         self.db.complete(t['id'],'Network left home')
                 self.last_network=net.state
-            # Record an expected morning even when the home gate suppresses it.
-            if self.db.meta('armed',False) and not self._active_test():
-                for p in self.plans():
-                    if p.start.timestamp()-p.lead <= now.timestamp() < p.restore.timestamp():
-                        self._ensure(p)
+            self.retry={key:until for key,until in self.retry.items() if until>now.timestamp()}
+            test=self._active_test()
+            armed=self.db.meta('armed',False)
+            if armed and not test and not self.active_wake():
+                self._start_due_wake(now)
             for r in self.db.work_sessions():
-                end=parse_timestamp(r['plan']['restore'])
+                end=parse_timestamp(r['plan'].get('restore'))
                 if not r['completed'] and end and now.timestamp()>=end.timestamp():
-                    skipped = r['kind']=='real' and not self.db.count(r['id']) and net.state!='Home'
-                    self.db.complete(r['id'],'Skipped: away or network unknown' if skipped else 'Window ended')
-                    self.note('Session window ended: '+r['id'])
+                    self.db.complete(r['id'],'Test window ended' if r['kind']!='real' else 'Window ended')
             await self._cleanup()
             # Finish cancellation before preparing another alarm on the same phone.
-            if any(a['status']=='cancel_pending' for a in self.db.alarms()): return
-            if net.state!='Home' or not self.cfg.ready(): return
+            if self.db.pending_cleanup(): return
+            if self.network().state!='Home' or not self.cfg.ready(): return
             test=self._active_test()
             if test:
                 await self._run_plan(read_plan(test['plan']),test['id']); return
             if not self.db.meta('armed',False): return
+            active=self.active_wake()
+            if active:
+                sid,p=active
+                await self._run_plan(p,sid)
+                return
             for p in self.plans():
-                sid='wake:'+p.day; r=self.db.session(sid)
-                if r and r['completed']: continue
-                if p.start.timestamp()-self.cfg.lead_seconds <= now.timestamp() <= p.end.timestamp():
-                    sid=self._ensure(p); await self._run_plan(p,sid)
                 if self._seed_window(p,now):
                     sid=self._ensure(p)
                     label=self._label(sid,p.start); a=self.db.alarm(label)
@@ -148,12 +203,11 @@ class Engine:
         return evening.timestamp()<=now.timestamp()<p.start.timestamp()
 
     async def _run_plan(self,p:Plan,sid:str):
-        now=self.now()
-        for due in p.rings:
-            delta=due.timestamp()-now.timestamp()
-            if DISPATCH_MARGIN<delta<=p.lead:
-                alarm=self.db.alarm(self._label(sid,due))
-                if not alarm or not alarm['prepared']: await self._prepare(sid,due)
+        now=self.now().timestamp()
+        due=p.next_ring(now+DISPATCH_MARGIN)
+        if due and due.timestamp()-now<=p.lead:
+            alarm=self.db.alarm(self._label(sid,due))
+            if not alarm or not alarm['prepared']: await self._prepare(sid,due)
 
     async def _prepare(self,sid:str,due:datetime,seed=False):
         revision=self.revision; label=self._label(sid,due)
@@ -194,8 +248,7 @@ class Engine:
         now=self.now().timestamp()
         if not self.ha: return
         # A single cancellation per tick keeps tag/network changes responsive.
-        for a in self.db.alarms():
-            if a['status']!='cancel_pending' or now<self.cancel_next: continue
+        for a in self.db.pending_alarms() if now>=self.cancel_next else ():
             key='cancel:'+a['label']
             if now<self.retry.get(key,0): continue
             self.retry[key]=now+3; self.cancel_next=now+1
@@ -219,8 +272,9 @@ class Engine:
 
     def _invalidate_future(self):
         now=self.now().timestamp()
+        active=self.db.meta('active_wake')
         for r in self.db.work_sessions():
-            if r['kind']!='real' or r['completed']: continue
+            if r['kind']!='real' or r['completed'] or r['id']==active: continue
             if datetime.fromisoformat(r['plan']['start']).timestamp()>now:
                 self.db.cancel_all(r['id'])
         self.revision+=1
@@ -235,23 +289,21 @@ class Engine:
                 if start.timestamp()<=self.now().timestamp()+self.cfg.lead_seconds:
                     raise ValueError('Next wake-up must be in the future.')
                 r=self.db.session('wake:'+data['date'])
-                if r and (r['completed'] or datetime.fromisoformat(r['plan']['start']).timestamp()<=self.now().timestamp()):
+                if r and (r['completed'] or r['id']==self.db.meta('active_wake')
+                          or datetime.fromisoformat(r['plan']['start']).timestamp()<=self.now().timestamp()):
                     raise ValueError('This day already started or completed. Choose another date.')
             self._invalidate_future(); self.db.set_meta('override',data)
             self.note('Next wake-up override '+('saved.' if data else 'cleared.'))
             return self.status()
 
     async def configure(self,changes:dict,token:str|None=None):
-        raw=self.cfg.to_dict(); raw.update(changes); new=Settings.from_dict(raw)
         async with self.lock:
+            raw=self.cfg.to_dict(); raw.update(changes); new=Settings.from_dict(raw)
             tag_changed=(new.qr_tag_id,new.qr_device_id)!=(self.cfg.qr_tag_id,self.cfg.qr_device_id)
             if tag_changed:
-                now=self.now().timestamp()
-                if self._active_test() or any(not r['completed'] and
-                        datetime.fromisoformat(r['plan']['start']).timestamp()-self.cfg.lead_seconds <= now <=
-                        datetime.fromisoformat(r['plan']['restore']).timestamp() for r in self.db.work_sessions()):
+                if self._active_test() or self.active_wake():
                     raise ValueError('Finish the running wake-up or phone test before replacing the tag.')
-            if new.notify_service!=self.cfg.notify_service and any(a['status']!='cancelled' for a in self.db.alarms()):
+            if new.notify_service!=self.cfg.notify_service and self.db.has_tracked_alarms():
                 raise ValueError('Complete alarm cleanup in Diagnostics before changing the phone.')
             self.files.backup()
             if tag_changed:
@@ -279,13 +331,12 @@ class Engine:
             if kind not in ('test','network-test'): raise ValueError('Unknown test type.')
             if not self.cfg.ready() or self.network().state!='Home': raise ValueError('Finish Connection and Home Wi-Fi setup; status must be Home.')
             if self._active_test(): raise ValueError('A test is already running. Finish it first.')
-            if self.db.meta('armed',False):
-                for p in self.plans():
-                    r=self.db.session('wake:'+p.day)
-                    if p.start.timestamp()-p.lead<=self.now().timestamp()<=p.restore.timestamp() and not (r and r['completed']):
-                        raise ValueError('A real wake-up is in progress. Run the test outside that window.')
-            if any(a['status']=='cancel_pending' for a in self.db.alarms()): raise ValueError('Wait for pending cleanup to finish.')
             start=self.now().replace(second=0,microsecond=0)+timedelta(minutes=2)
+            if self.db.meta('armed',False):
+                if self.active_wake() or any(p.start.timestamp()<=(start+timedelta(minutes=5)).timestamp()
+                                             for p in self.plans()):
+                    raise ValueError('A real wake-up is active or due soon. Run the test after it is confirmed.')
+            if self.db.pending_cleanup(): raise ValueError('Wait for pending cleanup to finish.')
             rings=tuple(start+timedelta(minutes=i) for i in range(3 if kind=='test' else 1))
             p=Plan(start.date().isoformat(),start,rings[-1],rings[-1]+timedelta(minutes=3),rings,self.cfg.lead_seconds,'Live test')
             self.test_id='test:'+uuid.uuid4().hex[:12]
@@ -297,7 +348,7 @@ class Engine:
         r=self.db.session(self.test_id) if self.test_id else None
         if not r or not r['completed'] or r['reason'] not in ('Tag','QR','Network left home') or not self.db.count(r['id']):
             raise ValueError('Wait for a prepared alarm and tag/network completion before confirming.')
-        if any(a['status']=='cancel_pending' for a in self.db.alarms(r['id'])) or r['needs_normal']:
+        if self.db.pending_cleanup(r['id']) or r['needs_normal']:
             raise ValueError('Wait for cleanup to finish before confirming.')
         self.db.set_meta('test_passed',self.now().isoformat()); self.note('User confirmed the live phone test.')
         return {'message':'Test confirmed.'}
@@ -318,17 +369,22 @@ class Engine:
         return {'message':'Sensor refresh requested. Unchanged values may keep their original timestamp.'}
 
     def status(self):
-        plans=[]
-        for p in self.plans():
-            r=self.db.session('wake:'+p.day)
-            if not r or not r['completed']: plans.append(p.public())
+        plans=[p.public() for p in self.plans()]
+        active=self.active_wake()
+        wake=None
+        if active:
+            sid,p=active
+            home=self.network().state=='Home'
+            wake={'date':p.day,'start':p.start.isoformat(),
+                  'next_ring':p.next_ring(self.now().timestamp()).isoformat() if home else None,
+                  'alarm_count':self.db.count(sid)}
         test=self.db.session(self.test_id) if self.test_id else None
         return {'now':self.now().isoformat(),'armed':self.db.meta('armed',False),'ready':self.cfg.ready(),
                 'connected':self.connected(),'connection_error':self.ha.error if self.ha else 'Enter HA URL and token in Connection.',
                 'wake_tag_id':self.cfg.qr_tag_id,'wake_tag_device_id':self.cfg.qr_device_id,
-                'network':self.network().public(),'plans':plans,'override':self.db.meta('override'),
+                'network':self.network().public(),'plans':plans,'active_wake':wake,'override':self.db.meta('override'),
                 'last_tag':self.db.meta('last_tag',self.db.meta('last_qr')),
                 'last_qr':self.db.meta('last_tag',self.db.meta('last_qr')),'test':test,'test_passed':self.db.meta('test_passed'),
-                'pending_cleanup':sum(a['status']=='cancel_pending' for a in self.db.alarms()),
+                'pending_cleanup':self.db.pending_cleanup(),
                 'last_error':self.last_error,'pairing':self.pair_until>self.now().timestamp(),'paired':self.paired,
                 'history':self.db.events(80),'sessions':[{**r,'alarm_count':self.db.count(r['id'])} for r in self.db.sessions(30)]}

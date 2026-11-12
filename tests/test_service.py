@@ -45,7 +45,7 @@ async def test_arm_requires_successful_test(tmp_path):
 async def test_preview_has_exact_times_without_changes(tmp_path):
     async with api(tmp_path) as (c,e):
         async with c.post('http://localhost/action',json={'name':'preview','date':'2026-09-18','start':'07:10'}) as r:
-            p=await r.json(); assert p['start'][11:16]=='07:10' and p['end'][11:16]=='08:30'
+            p=await r.json(); assert p['start'][11:16]=='07:10' and p['end'] is None
         assert e.db.meta('override') is None
 
 async def test_report_redacts_network_and_token(tmp_path):

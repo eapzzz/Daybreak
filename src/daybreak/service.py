@@ -81,8 +81,10 @@ def build_app(engine:Engine)->web.Application:
             engine.db.set_meta('armed',enabled)
             if not enabled:
                 engine.db.cancel_all()
+                active=engine.active_wake()
+                if active: engine.db.complete(active[0],'Operator maintenance')
                 for r in engine.db.work_sessions():
-                    if r['needs_normal']: engine.db.complete(r['id'],'Operator maintenance')
+                    if r['needs_normal'] and not r['completed']: engine.db.complete(r['id'],'Operator maintenance')
             result={'message':'Daily routine '+('enabled.' if enabled else 'paused.')}
         elif name=='backup': result={'name':engine.files.backup()}
         elif name=='backups': result={'backups':engine.files.backups()}
