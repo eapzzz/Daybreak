@@ -158,6 +158,27 @@ and `device_id`. A fresh identifier retires the old QR, but it does not prove th
 future events came from NFC rather than a copy of the new identifier. Do not put
 your HA token or password on the tag. See the [Companion tag documentation](https://companion.home-assistant.io/docs/integrations/universal-links/).
 
+## Android 10-second mode
+
+The optional [Daybreak Android app](android/README.md) takes over the daily alarm
+after a locked-phone test. It prepares the next ring and raises Android's alarm
+stream to maximum two seconds before each 10-second slot. Silencing a ring
+leaves the next slot on the same clock. An alarm already playing keeps playing
+through the slot.
+
+In **F6 · Sound**, show the pairing key and save it in the installed app. Allow
+exact alarms, notifications and lock-screen alerts in Android. Run **Test Android
+link** with the phone locked. Silence the first ring, let the second ring, then
+scan your usual wake-up tag. Check that the app stops and restores the old alarm
+volume before selecting **Enable 10-second mode**.
+
+The server sends signed start, refresh and stop commands via Home Assistant
+Companion. The app needs no Home Assistant token. The mode uses the active wake-up
+on the server and does not create a Google Clock evening alarm. If delivery is
+interrupted, the phone stops after the current authorization expires (up to 75
+seconds from the last refresh). The server resumes an unfinished wake-up when
+delivery becomes available again. **Use Google Clock** restores minute repeats.
+
 ## Schedule semantics
 
 Default settings:
@@ -165,7 +186,7 @@ Default settings:
 | Setting | Default |
 |---|---|
 | Weekly first alarm | 05:55, every day |
-| Repeat interval | Every minute until tag confirmation |
+| Repeat interval in Google Clock | Every minute until tag confirmation |
 | Preparation lead | 10 seconds |
 | Daytime volume restored | After tag confirmation |
 | Evening preparation | 22:00, one alarm at the next day's exact first-ring time |
@@ -182,8 +203,8 @@ late. A live one-second test rolled an alarm to the following day when Clock pro
 it too late, so the fresh-install default remains 10 seconds. Shorter values need
 a real phone test before relying on them.
 
-The first ring is at the entered time. Daybreak schedules the next alarm every
-minute until tag confirmation.
+The first ring is at the entered time. Google Clock repeats every minute until
+tag confirmation. The Android app mode repeats every ten seconds.
 An unfinished wake-up remains active across midnight. If a later day's start
 passes while it is active, both dates are covered by the same confirmation.
 

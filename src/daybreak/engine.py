@@ -7,6 +7,7 @@ from typing import Callable
 from .model import Settings, Plan, upcoming, plan_for, network_status, valid_local, parse_timestamp
 from .store import Store, SettingsFiles
 from .ha import HomeAssistant, HAError, alarm_payload, dismiss_payload, command
+from .native import NativeAlarms, START_LEAD
 
 DISPATCH_MARGIN=.05
 
@@ -33,6 +34,7 @@ class Engine:
             r=self.db.session(self.test_id)
             if r and not r['completed']: self.db.complete(self.test_id,'Interrupted test')
         self.services_cache=[]; self.event_count=0
+        self.native=NativeAlarms(self)
         self._resume_legacy_wake()
     def now(self): return self.clock().astimezone(self.cfg.tz)
     def connected(self): return bool(self.ha and self.ha.ready.is_set())
@@ -87,7 +89,8 @@ class Engine:
     def _start_due_wake(self,now:datetime)->None:
         for p in self.plans():
             delta=p.start.timestamp()-now.timestamp()
-            if -60<=delta<=p.lead:
+            lead=START_LEAD if self.native.enabled else p.lead
+            if -60<=delta<=lead:
                 self._activate(p)
                 return
         # The evening seed may have rung while the scheduler was stopped.
@@ -121,7 +124,7 @@ class Engine:
         data=event.get('data',{})
         active=self.active_wake()
         test=self._active_test()
-        if not active and not test and self.pair_until>self.now().timestamp():
+        if not active and not test and not self.native.trial() and self.pair_until>self.now().timestamp():
             if data.get('tag_id') and data.get('device_id'):
                 self.paired={'tag_id':str(data['tag_id']),'device_id':str(data['device_id'])}
                 self.pair_until=0; self.note('Tag captured. Review and save it from Connection to pair.')
@@ -131,6 +134,7 @@ class Engine:
         now=self.now(); self.db.set_meta('last_tag',now.isoformat())
         # Retain the legacy metadata/status contract for existing HA bridges.
         self.db.set_meta('last_qr',now.isoformat())
+        if self.native.tag(): return
         if test:
             scopes=[test['id']]
         else:
@@ -148,7 +152,7 @@ class Engine:
             self.db.complete(sid,'Tag'); self.note('Wake-up tag accepted. '+('Test finished.' if test else 'Wake-up complete.'))
 
     def begin_pairing(self):
-        if self.active_wake() or self._active_test():
+        if self.active_wake() or self._active_test() or self.native.trial():
             raise ValueError('Finish the running wake-up or phone test before pairing a tag.')
         self.paired=None; self.pair_until=self.now().timestamp()+120
         return {'message':'Hold your phone near the bathroom NFC tag within two minutes. Review the captured identifiers before saving.'}
@@ -171,7 +175,7 @@ class Engine:
             self.retry={key:until for key,until in self.retry.items() if until>now.timestamp()}
             test=self._active_test()
             armed=self.db.meta('armed',False)
-            if armed and not test and not self.active_wake():
+            if armed and not test and not self.native.trial() and not self.active_wake():
                 self._start_due_wake(now)
             for r in self.db.work_sessions():
                 end=parse_timestamp(r['plan'].get('restore'))
@@ -179,13 +183,15 @@ class Engine:
                     self.db.complete(r['id'],'Test window ended' if r['kind']!='real' else 'Window ended')
             await self._cleanup()
             # Finish cancellation before preparing another alarm on the same phone.
-            if self.db.pending_cleanup(): return
-            if self.network().state!='Home' or not self.cfg.ready(): return
+            allowed=not self.db.pending_cleanup() and self.network().state=='Home' and self.cfg.ready()
             test=self._active_test()
+            armed=self.db.meta('armed',False)
+            active=self.active_wake() if armed and not test else None
+            if await self.native.tick(active,allowed): return
+            if not allowed: return
             if test:
                 await self._run_plan(read_plan(test['plan']),test['id']); return
-            if not self.db.meta('armed',False): return
-            active=self.active_wake()
+            if not armed or self.native.enabled: return
             if active:
                 sid,p=active
                 await self._run_plan(p,sid)
@@ -299,10 +305,11 @@ class Engine:
         async with self.lock:
             raw=self.cfg.to_dict(); raw.update(changes); new=Settings.from_dict(raw)
             tag_changed=(new.qr_tag_id,new.qr_device_id)!=(self.cfg.qr_tag_id,self.cfg.qr_device_id)
+            phone_changed=new.notify_service!=self.cfg.notify_service
             if tag_changed:
-                if self._active_test() or self.active_wake():
+                if self._active_test() or self.active_wake() or self.native.trial():
                     raise ValueError('Finish the running wake-up or phone test before replacing the tag.')
-            if new.notify_service!=self.cfg.notify_service and self.db.has_tracked_alarms():
+            if phone_changed and (self.db.has_tracked_alarms() or self.native.trial() or self.db.meta('native_delivery')):
                 raise ValueError('Complete alarm cleanup in Diagnostics before changing the phone.')
             self.files.backup()
             if tag_changed:
@@ -311,6 +318,7 @@ class Engine:
                 self.db.set_meta('armed',False); self.db.set_meta('test_passed',None)
                 self.db.set_meta('active_test',None); self.test_id=None
             self.files.save(new,token)
+            if tag_changed or phone_changed: self.native.unverify()
             reconnect=new.ha_url!=self.cfg.ha_url or bool(token)
             self._invalidate_future(); self.cfg=new
             if tag_changed:
@@ -329,7 +337,7 @@ class Engine:
         async with self.lock:
             if kind not in ('test','network-test'): raise ValueError('Unknown test type.')
             if not self.cfg.ready() or self.network().state!='Home': raise ValueError('Finish Connection and Home Wi-Fi setup; status must be Home.')
-            if self._active_test(): raise ValueError('A test is already running. Finish it first.')
+            if self._active_test() or self.native.trial(): raise ValueError('A test is already running. Finish it first.')
             start=self.now().replace(second=0,microsecond=0)+timedelta(minutes=2)
             if self.db.meta('armed',False):
                 if self.active_wake() or any(p.start.timestamp()<=(start+timedelta(minutes=5)).timestamp()
@@ -368,15 +376,16 @@ class Engine:
         return {'message':'Sensor refresh requested. Unchanged values may keep their original timestamp.'}
 
     def status(self):
-        plans=[p.public() for p in self.plans()]
+        interval=self.native.interval
+        plans=[p.public(interval) for p in self.plans()]
         active=self.active_wake()
         wake=None
         if active:
             sid,p=active
             home=self.network().state=='Home'
             wake={'date':p.day,'start':p.start.isoformat(),
-                  'next_ring':p.next_ring(self.now().timestamp()).isoformat() if home else None,
-                  'alarm_count':self.db.count(sid)}
+                  'next_ring':p.next_ring(self.now().timestamp(),interval).isoformat() if home else None,
+                  'alarm_count':self.db.count(sid),'interval_seconds':interval}
         test=self.db.session(self.test_id) if self.test_id else None
         return {'now':self.now().isoformat(),'armed':self.db.meta('armed',False),'ready':self.cfg.ready(),
                 'connected':self.connected(),'connection_error':self.ha.error if self.ha else 'Enter HA URL and token in Connection.',
@@ -384,6 +393,6 @@ class Engine:
                 'network':self.network().public(),'plans':plans,'active_wake':wake,'override':self.db.meta('override'),
                 'last_tag':self.db.meta('last_tag',self.db.meta('last_qr')),
                 'last_qr':self.db.meta('last_tag',self.db.meta('last_qr')),'test':test,'test_passed':self.db.meta('test_passed'),
-                'pending_cleanup':self.db.pending_cleanup(),
+                'pending_cleanup':self.db.pending_cleanup(),'native':self.native.public(),
                 'last_error':self.last_error,'pairing':self.pair_until>self.now().timestamp(),'paired':self.paired,
                 'history':self.db.events(80),'sessions':[{**r,'alarm_count':self.db.count(r['id'])} for r in self.db.sessions(30)]}

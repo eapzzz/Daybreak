@@ -65,7 +65,15 @@ def build_app(engine:Engine)->web.Application:
                                            'home_bssids':list(dict.fromkeys(engine.cfg.home_bssids+[bssid]))})
         elif name=='preview':
             p=plan_for(engine.cfg,date.fromisoformat(data['date']),{'date':data['date'],'start':data['start']})
-            result=p.public()
+            result=p.public(engine.native.interval)
+        elif name in ('native_pair','native_test','native_enable'):
+            async with engine.lock:
+                if name=='native_pair': result={'key':engine.native.pairing_key()}
+                elif name=='native_test': result=engine.native.start_trial()
+                else:
+                    enabled=data.get('enabled')
+                    if type(enabled) is not bool: raise ValueError('enabled must be true or false.')
+                    result=engine.native.set_enabled(enabled)
         elif name=='set_override': result=await engine.set_override(data.get('override'))
         elif name in ('start_test','start_network_test'):
             result=await engine.start_test('test' if name=='start_test' else 'network-test')

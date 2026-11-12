@@ -21,6 +21,7 @@ from prompt_toolkit.widgets import TextArea,Button,Frame,Label,RadioList,Checkbo
 
 from . import __version__
 from .model import Settings,DAYS,plan_for,upcoming,parse_timestamp
+from .native import INTERVAL
 from . import system
 
 PAGES=[('overview','Overview'),('next','Next wake-up'),('routine','Routine'),('connection','Connection'),
@@ -66,16 +67,17 @@ def stamp(value,seconds=False):
 
 def plan_text(p:dict|None)->str:
     if not p: return 'No wake-up scheduled.'
+    fast=p.get('interval_seconds')==INTERVAL
     if p.get('repeat_timezone'):
         lines=[f"{p['date']}  ·  First ring {stamp(p['start'])}  ·  {p['source']}",
-               'Every minute until tag confirmation.',
+               'Every 10 seconds until tag confirmation.' if fast else 'Every minute until tag confirmation.',
                'Daytime volume returns after confirmation.', '', ' FIRST ALARMS']
     else:
         lines=[f"{p['date']}  ·  {stamp(p['start'])} → {stamp(p['end'])}  ·  {p['count']} alarms",
                f"Daytime volume: {stamp(p['restore'])}  ·  {p['source']}", '']
     lines.extend([' PREPARE    RING       PREPARE    RING       PREPARE    RING',
                   ' ───────────────────────────────────────────────────────────'])
-    rows=[f" {stamp(x['prepare'],True)}   {stamp(x['ring'])} " for x in p['alarms']]
+    rows=[f" {stamp(x['prepare'],True)}   {stamp(x['ring'],fast)} " for x in p['alarms']]
     for i in range(0,len(rows),3): lines.append('  '.join(rows[i:i+3]))
     return '\n'.join(lines)
 
@@ -170,11 +172,11 @@ class Console:
         self.weekly={}; weekday_cols=[]
         for day in DAYS:
             area,box=field(day.upper(),'05:55',width=6); self.weekly[day]=area; weekday_cols.append(box)
-        self.lead,lead=field('Preparation lead (sec)',self.cfg.lead_seconds,width=18)
+        self.lead,lead=field('Clock preparation lead (sec)',self.cfg.lead_seconds,width=18)
         self.evening=Checkbox(text='Prepare one alarm the evening before',checked=True)
         self.evening_time,et=field('Evening preparation time','22:00',width=18)
         pages['routine']=self.page('Routine','Weekly first-ring times. Leave a day blank to leave it unscheduled.',
-            VSplit(weekday_cols,padding=1),gap(),plain('Repeats every minute until tag confirmation.',1,'class:muted'),
+            VSplit(weekday_cols,padding=1),gap(),plain(self._repeat_text,1,'class:muted'),
             gap(),lead,gap(),self.evening,gap(),et,gap(),
             buttons(self.button('Save routine',self.save_routine),self.button('Reload saved',self.reload_fields)))
         self.url,url=field('Home Assistant base URL','')
@@ -207,12 +209,12 @@ class Console:
         for name,label in [('loud_alarm','Wake-up alarm level'),('loud_ring','Wake-up ringtone level'),
                            ('normal_alarm','Daytime alarm level'),('normal_ring','Daytime ringtone level')]:
             a,b=field(label,getattr(self.cfg,name)); self.sound_fields[name]=a; sound_boxes.append(b)
-        pages['sound']=self.page('Sound','Device volume levels, not percentages. Preparation occurs only before each alarm.',
+        pages['sound']=self.page('Sound','Google Clock uses the volume levels below. The Daybreak app uses maximum alarm volume.',
             VSplit(sound_boxes[:2],padding=5),gap(),VSplit(sound_boxes[2:],padding=5),gap(),
             buttons(self.button('Save sound',self.save_sound),self.button('Run full phone test',self.start_test)),gap(),
-            Frame(plain('Wake-up: normal ringtone mode, then the configured alarm and ringtone levels.\n'
-                        'After tag confirmation: stop Daybreak alarms and restore daytime levels.\n'
-                        'No extra volume tick on the full minute.',4),title='BEHAVIOR'))
+            Frame(plain(self._native_card,4),title='ANDROID 10-SECOND MODE'),gap(),
+            buttons(self.button('Show pairing key',self.native_pair),self.button('Test Android link',self.native_test)),gap(),
+            buttons(self.button('Enable 10-second mode',self.native_enable,True),self.button('Use Google Clock',self.native_enable,False)))
         pages['diagnostics']=self.page('Diagnostics','Real tests use a separate session. They do not complete your next morning.',
             buttons(self.button('Check connection',self.check_connection),self.button('Refresh sensors',self.refresh_sensors)),gap(),
             buttons(self.button('Run rolling test',self.start_test),self.button('Run Wi-Fi test',self.start_network_test)),gap(),
@@ -242,22 +244,23 @@ class Console:
         wake=self.status_data.get('active_wake')
         if wake:
             next_ring=wake.get('next_ring')
+            fast=wake.get('interval_seconds')==INTERVAL
             if self.status_data.get('pending_cleanup'):
                 next_line='  Waiting for alarm cleanup.'
             elif next_ring:
-                next_line=f"  Next ring {stamp(next_ring)}"
+                next_line=f"  Next ring {stamp(next_ring,fast)}"
             else:
                 next_line='  Waiting for home Wi-Fi.'
             return FormattedText([('class:accent','  AWAITING TAG\n'),
                                   ('',f"  Started {wake['date']} at {stamp(wake['start'])}\n{next_line}\n"),
-                                  ('class:muted',f"  Alarms tracked: {wake['alarm_count']}")])
+                                  ('class:muted','  Android app · every 10 seconds' if fast else f"  Alarms tracked: {wake['alarm_count']}")])
         p=next(iter(self.status_data.get('plans',[])),None)
         if not p: return '  No scheduled morning.\n  Configure Routine or Next wake-up.'
         now=parse_timestamp(self.status_data.get('now'))
         start=parse_timestamp(p['start']); secs=max(0,int((start-now).total_seconds())) if now and start else 0
         hours,secs=divmod(secs,3600); mins,_=divmod(secs,60)
         return FormattedText([('class:accent',f"  First ring {stamp(p['start'])}\n"),
-                              ('',f"  {p['date']}  ·  Every minute until tag\n"),
+                              ('',f"  {p['date']}  ·  {'Every 10 sec' if self._native_interval()==INTERVAL else 'Every minute'} until tag\n"),
                               ('class:muted',f"  Starts in {hours:02d}h {mins:02d}m\n  {p['source']}")])
     def _status_card(self):
         s=self.status_data; net=s.get('network',{}).get('state','Unknown')
@@ -286,8 +289,21 @@ class Console:
     def _next_preview(self):
         try:
             d=date.fromisoformat(self.next_date.text.strip()); p=plan_for(self.cfg,d,{'date':str(d),'start':self.next_time.text.strip()})
-            return plan_text(p.public())
+            return plan_text(p.public(self._native_interval()))
         except (ValueError,TypeError): return 'Enter a valid date and HH:MM time to preview the first alarms.'
+    def _native_interval(self):
+        return INTERVAL if self.status_data.get('native',{}).get('enabled') else 60
+    def _repeat_text(self):
+        return ('Repeats every 10 seconds until tag confirmation.' if self._native_interval()==INTERVAL
+                else 'Repeats every minute until tag confirmation.')
+    def _native_card(self):
+        state=self.status_data.get('native',{})
+        mode='Daybreak app · every 10 seconds' if state.get('enabled') else 'Google Clock · every minute'
+        if state.get('testing'): test='In progress. Scan after the second ring.'
+        elif state.get('stopping'): test='Tag received. Stop requested.'
+        elif state.get('trial_result')=='Tag': test='Tag received. Confirm on the phone before enabling.'
+        else: test=state.get('trial_result') or 'Run once with the phone locked.'
+        return f"  Mode   {mode}\n  Link   {test}\n  Android app resets alarm volume and schedules each ring 2 seconds ahead."
     def _pair_status(self):
         s=self.status_data
         if s.get('paired'):
@@ -372,6 +388,19 @@ class Console:
                          'weekly':{k:(a.text.strip() or None) for k,a in self.weekly.items()},
                          'evening_enabled':self.evening.checked,'evening_time':self.evening_time.text.strip()})
     async def save_sound(self): await self.save({k:int(a.text.strip()) for k,a in self.sound_fields.items()})
+    async def native_pair(self):
+        result=await self.control.action('native_pair')
+        await self.show_text('Android pairing key',result['key']+'\n\nEnter this key in the Daybreak Android app. Keep it private.')
+    async def native_test(self):
+        if await self.confirm('Test Android link','Lock the paired phone. The first ring is about 12 seconds after Continue.\nSilence that ring, wait for the second, then scan the wake-up tag.\nThe test expires 30 seconds after the first ring.'):
+            result=await self.control.action('native_test')
+            self.toast(f"Android link test starts at {stamp(result['start'],True)}.")
+    async def native_enable(self,enabled):
+        prompt=('Did the locked phone ring twice, return to full alarm volume, and stop after the tag?'
+                if enabled else 'Switch daily wake-ups to Google Clock with one alarm per minute?')
+        if await self.confirm('Change alarm mode',prompt):
+            result=await self.control.action('native_enable',enabled=enabled)
+            self.toast(result['message'])
     async def save_wifi(self):
         changes={'ssid_entity':self.ssid_sensor.text.strip(),'bssid_entity':self.bssid_sensor.text.strip(),
                  'heartbeat_entity':self.heartbeat_sensor.text.strip(),
@@ -430,7 +459,7 @@ class Console:
         await self.show_text('One-time wake-up preview',plan_text(p))
     async def save_next(self):
         p=await self.control.action('preview',date=self.next_date.text.strip(),start=self.next_time.text.strip())
-        if await self.confirm('Save next wake-up',f"{p['date']}\nFirst ring {stamp(p['start'])}. The alarms repeat every minute until tag confirmation."):
+        if await self.confirm('Save next wake-up',f"{p['date']}\nFirst ring {stamp(p['start'])}. {self._repeat_text()}"):
             await self.control.action('set_override',override={'date':p['date'],'start':self.next_time.text.strip()})
             self.toast('Next wake-up saved. Previous evening seed will be reconciled.')
     async def clear_next(self):

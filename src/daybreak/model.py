@@ -126,25 +126,27 @@ class Plan:
     source: str
     repeat_timezone: str|None = None
 
-    def next_ring(self, after: float) -> datetime|None:
+    def next_ring(self, after: float, interval: int = 60) -> datetime|None:
         if self.repeat_timezone is None:
             return next((ring for ring in self.rings if ring.timestamp()>after),None)
         start=self.start.timestamp()
-        minute=max(0,floor((after-start)/60)+1)
-        return datetime.fromtimestamp(start+minute*60,ZoneInfo(self.repeat_timezone))
+        slot=max(0,floor((after-start)/interval)+1)
+        return datetime.fromtimestamp(start+slot*interval,ZoneInfo(self.repeat_timezone))
 
-    def public(self) -> dict:
+    def public(self, interval: int = 60) -> dict:
         rings=self.rings
+        lead=self.lead
         if self.repeat_timezone:
             tz=ZoneInfo(self.repeat_timezone)
-            rings=tuple(datetime.fromtimestamp(self.start.timestamp()+m*60,tz) for m in range(9))
+            rings=tuple(datetime.fromtimestamp(self.start.timestamp()+slot*interval,tz) for slot in range(9))
+            if interval<60: lead=2
         result={'date':self.day,'start':self.start.isoformat(),'end':self.end.isoformat() if self.end else None,
                 'restore':self.restore.isoformat() if self.restore else None,'source':self.source,
                 'count':None if self.repeat_timezone else len(rings),
                 'alarms':[{'ring':t.isoformat(),
-                           'prepare':datetime.fromtimestamp(t.timestamp()-self.lead,t.tzinfo).isoformat()} for t in rings]}
+                           'prepare':datetime.fromtimestamp(t.timestamp()-lead,t.tzinfo).isoformat()} for t in rings]}
         if self.repeat_timezone:
-            result.update(repeat_timezone=self.repeat_timezone,lead_seconds=self.lead)
+            result.update(repeat_timezone=self.repeat_timezone,lead_seconds=lead,interval_seconds=interval)
         return result
 
     @property
