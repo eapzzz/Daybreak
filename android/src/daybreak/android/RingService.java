@@ -69,15 +69,23 @@ public final class RingService extends Service {
             schedule.prepareVolume(due);
             handler.removeCallbacksAndMessages(null);
             preparing.acquire(5_000);
-            handler.postDelayed(() -> {
-                try {
-                    if (schedule.claimRing(requested, due)) play(requested);
-                } finally {
-                    releasePreparationLock();
-                }
-            }, Math.max(0, due - System.currentTimeMillis()));
+            ringWhenDue(requested, due);
         }
         return START_NOT_STICKY;
+    }
+
+    private void ringWhenDue(String requested, long due) {
+        long delay = due - System.currentTimeMillis();
+        // Handler runs on uptime, while the alarm grid uses wall time.
+        if (delay > 0 && delay <= AlarmSchedule.LEAD) {
+            handler.postDelayed(() -> ringWhenDue(requested, due), delay);
+            return;
+        }
+        try {
+            if (schedule.claimRing(requested, due)) play(requested);
+        } finally {
+            releasePreparationLock();
+        }
     }
 
     private void play(String requested) {
