@@ -20,14 +20,17 @@ def test_default_sequence():
     first=p.start.timestamp()
     assert [p.next_ring(first+60*m-1).strftime('%H:%M') for m in range(16)] == [
         f'05:{m:02d}' for m in range(55,60)]+[f'06:{m:02d}' for m in range(11)]
-    assert p.next_ring(first+15*60).strftime('%H:%M')=='06:13'
-    assert p.next_ring(first+120*60).strftime('%H:%M')=='07:58'
+    assert p.next_ring(first+15*60).strftime('%H:%M')=='06:11'
+    assert p.next_ring(first+120*60).strftime('%H:%M')=='07:56'
     assert p.next_ring(first+24*3600).date()==D+timedelta(days=1)
 
-def test_old_duration_settings_load_without_limiting_the_cadence():
-    cfg=Settings.from_dict({'minimum_minutes':60,'round_minutes':30,'restore_minutes':15,'dense_minutes':90})
-    assert cfg.dense_minutes==90
-    assert 'minimum_minutes' not in cfg.to_dict()
+def test_old_duration_and_interval_settings_load_as_minute_repeats():
+    legacy={'minimum_minutes':60,'round_minutes':30,'restore_minutes':15,
+            'dense_minutes':0,'dense_step':30,'sparse_minutes':3}
+    cfg=Settings.from_dict(legacy)
+    assert not cfg.to_dict().keys() & legacy.keys()
+    plan=plan_for(cfg,D)
+    assert plan.next_ring(plan.start.timestamp()+120*60).strftime('%H:%M')=='07:56'
 
 def test_override_only_selected_day():
     s=Settings(); o={'date':D.isoformat(),'start':'07:30'}
@@ -39,7 +42,7 @@ def test_disabled_weekday_override():
     assert plan_for(s,D) is None
     assert plan_for(s,D,{'date':str(D),'start':'08:00'}) is not None
 
-@pytest.mark.parametrize('change',[{'lead_seconds':0},{'lead_seconds':60},{'dense_minutes':-1},{'ha_url':'http://a:b@home/'},{'timezone':'fake/zone'},{'sparse_minutes':0}])
+@pytest.mark.parametrize('change',[{'lead_seconds':0},{'lead_seconds':60},{'ha_url':'http://a:b@home/'},{'timezone':'fake/zone'}])
 def test_invalid_config(change):
     s=Settings(); s.__dict__.update(change)
     with pytest.raises(ValueError): validate(s)

@@ -188,25 +188,30 @@ async def test_away_pauses_and_home_resumes_after_the_former_end(engine):
     h.states['sensor.wifi']['state']='Other'
     c.now+=timedelta(seconds=1)
     await e.tick()
-    c.now=c.now.replace(hour=8,minute=0,second=50)
+    c.now=c.now.replace(hour=8,minute=1,second=50)
     await e.tick()
     assert e.status()['active_wake']['next_ring'] is None
     assert not creates(h) and not volumes(h)
     h.states['sensor.wifi']['state']='HomeWiFi'
     await e.tick()
     assert len(creates(h))==1
-    assert 'MINUTES:1:int' in creates(h)[0]['data']['intent_extras']
+    assert 'MINUTES:2:int' in creates(h)[0]['data']['intent_extras']
 
-async def test_wake_continues_across_midnight_and_restart_until_tag(engine):
+async def test_wake_continues_every_minute_across_midnight_and_upgrade_until_tag(engine):
     e,c,h=engine
     c.now+=timedelta(seconds=1)
     await e.tick()
     assert len(creates(h))==1
-    await e.configure({'sparse_minutes':5})
-    c.now+=timedelta(days=1,hours=2)
+    sid='wake:2026-09-17'
+    old_plan=e.db.session(sid)['plan']
+    old_plan['cadence']={'dense_minutes':15,'dense_step':1,'sparse_minutes':3,
+                         'timezone':old_plan.pop('repeat_timezone')}
+    e.db.replace_plan(sid,old_plan)
+    c.now+=timedelta(days=1,hours=2,minutes=1)
     e=Engine(e.files,e.db,h,c)
     await e.tick()
     assert len(creates(h))==2
+    assert 'MINUTES:56:int' in creates(h)[1]['data']['intent_extras']
     assert e.status()['active_wake']['date']=='2026-09-17'
     assert e.db.session('wake:2026-09-18') is None
 

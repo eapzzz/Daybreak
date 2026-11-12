@@ -1,7 +1,7 @@
 # Daybreak design
 
-The first alarm rings at the scheduled time. By default it repeats every minute
-for the first 15 minutes, then every 3 minutes until tag confirmation.
+The first alarm rings at the scheduled time. It repeats every minute until tag
+confirmation.
 Prepare each alarm and volume at the configured preparation lead (default 10 seconds); no full-minute volume tick.
 An evening seed uses the exact first alarm of the next scheduled day.
 

@@ -66,12 +66,9 @@ def stamp(value,seconds=False):
 
 def plan_text(p:dict|None)->str:
     if not p: return 'No wake-up scheduled.'
-    c=p.get('cadence')
-    if c:
-        initial=(f"First {c['dense_minutes']} min: every {c['dense_step']} min. " if c['dense_minutes'] else '')
+    if p.get('repeat_timezone'):
         lines=[f"{p['date']}  ·  First ring {stamp(p['start'])}  ·  {p['source']}",
-               f"{initial}Then every {c['sparse_minutes']} min until tag confirmation." if initial
-               else f"Every {c['sparse_minutes']} min until tag confirmation.",
+               'Every minute until tag confirmation.',
                'Daytime volume returns after confirmation.', '', ' FIRST ALARMS']
     else:
         lines=[f"{p['date']}  ·  {stamp(p['start'])} → {stamp(p['end'])}  ·  {p['count']} alarms",
@@ -173,18 +170,13 @@ class Console:
         self.weekly={}; weekday_cols=[]
         for day in DAYS:
             area,box=field(day.upper(),'05:55',width=6); self.weekly[day]=area; weekday_cols.append(box)
-        self.routine_fields={}; numeric=[]
-        for name,label in [('dense_minutes','Initial phase (min)'),('dense_step','Initial interval (min)'),
-                           ('sparse_minutes','Interval until tag (min)'),('lead_seconds','Preparation lead (sec)')]:
-            area,box=field(label,getattr(self.cfg,name)); self.routine_fields[name]=area; numeric.append(box)
+        self.lead,lead=field('Preparation lead (sec)',self.cfg.lead_seconds,width=18)
         self.evening=Checkbox(text='Prepare one alarm the evening before',checked=True)
         self.evening_time,et=field('Evening preparation time','22:00',width=18)
-        rows=[]
-        for n in range(0,len(numeric),2): rows.extend([VSplit(numeric[n:n+2],padding=4),gap()])
         pages['routine']=self.page('Routine','Weekly first-ring times. Leave a day blank to leave it unscheduled.',
-            VSplit(weekday_cols,padding=1),gap(),*rows,self.evening,gap(),et,gap(),
-            buttons(self.button('Save routine',self.save_routine),self.button('Reload saved',self.reload_fields)),gap(),
-            plain('The alarms repeat until tag confirmation. Changes to intervals apply to future wake-ups.',2,'class:muted'))
+            VSplit(weekday_cols,padding=1),gap(),plain('Repeats every minute until tag confirmation.',1,'class:muted'),
+            gap(),lead,gap(),self.evening,gap(),et,gap(),
+            buttons(self.button('Save routine',self.save_routine),self.button('Reload saved',self.reload_fields)))
         self.url,url=field('Home Assistant base URL','')
         self.token,token=field('Long-lived token  ·  masked; leave blank to keep the stored token','',password=True)
         self.notify_field,nf=field('Notification action','')
@@ -265,7 +257,7 @@ class Console:
         start=parse_timestamp(p['start']); secs=max(0,int((start-now).total_seconds())) if now and start else 0
         hours,secs=divmod(secs,3600); mins,_=divmod(secs,60)
         return FormattedText([('class:accent',f"  First ring {stamp(p['start'])}\n"),
-                              ('',f"  {p['date']}  ·  Until tag confirmation\n"),
+                              ('',f"  {p['date']}  ·  Every minute until tag\n"),
                               ('class:muted',f"  Starts in {hours:02d}h {mins:02d}m\n  {p['source']}")])
     def _status_card(self):
         s=self.status_data; net=s.get('network',{}).get('state','Unknown')
@@ -363,7 +355,8 @@ class Console:
                     (self.heartbeat_sensor,self.cfg.heartbeat_entity),(self.ssids,'\n'.join(self.cfg.home_ssids)),
                     (self.bssids,'\n'.join(self.cfg.home_bssids)),(self.evening_time,self.cfg.evening_time)]: a.text=v
         for k,a in self.weekly.items(): a.text=self.cfg.weekly[k] or ''
-        for fields in (self.routine_fields,self.sound_fields,self.net_fields):
+        self.lead.text=str(self.cfg.lead_seconds)
+        for fields in (self.sound_fields,self.net_fields):
             for k,a in fields.items(): a.text=str(getattr(self.cfg,k))
         self.evening.checked=self.cfg.evening_enabled; self.token.text=''
     async def reload_fields(self):
@@ -375,10 +368,9 @@ class Console:
                          'timezone':self.zone.text.strip(),'alarm_package':self.package.text.strip(),
                          'qr_tag_id':self.tag_id.text.strip(),'qr_device_id':self.tag_device.text.strip()},self.token.text.strip() or None)
     async def save_routine(self):
-        changes={k:int(a.text.strip()) for k,a in self.routine_fields.items()}
-        changes.update(weekly={k:(a.text.strip() or None) for k,a in self.weekly.items()},
-                       evening_enabled=self.evening.checked,evening_time=self.evening_time.text.strip())
-        await self.save(changes)
+        await self.save({'lead_seconds':int(self.lead.text.strip()),
+                         'weekly':{k:(a.text.strip() or None) for k,a in self.weekly.items()},
+                         'evening_enabled':self.evening.checked,'evening_time':self.evening_time.text.strip()})
     async def save_sound(self): await self.save({k:int(a.text.strip()) for k,a in self.sound_fields.items()})
     async def save_wifi(self):
         changes={'ssid_entity':self.ssid_sensor.text.strip(),'bssid_entity':self.bssid_sensor.text.strip(),
@@ -438,7 +430,7 @@ class Console:
         await self.show_text('One-time wake-up preview',plan_text(p))
     async def save_next(self):
         p=await self.control.action('preview',date=self.next_date.text.strip(),start=self.next_time.text.strip())
-        if await self.confirm('Save next wake-up',f"{p['date']}\nFirst ring {stamp(p['start'])}. The alarms repeat until tag confirmation."):
+        if await self.confirm('Save next wake-up',f"{p['date']}\nFirst ring {stamp(p['start'])}. The alarms repeat every minute until tag confirmation."):
             await self.control.action('set_override',override={'date':p['date'],'start':self.next_time.text.strip()})
             self.toast('Next wake-up saved. Previous evening seed will be reconciled.')
     async def clear_next(self):

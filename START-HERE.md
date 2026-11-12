@@ -34,9 +34,9 @@ instalacji codzienna pobudka nie jest jeszcze włączona.
 4. **System**: **Enable daily routine** oraz **Enable autostart**.
 
 **Next wake-up** ustawia jeden dzień, **Routine** — regułę tygodniową.
-Godzina 07:10 oznacza pierwszy alarm o 07:10. Kolejne alarmy powtarzają się
+Godzina 07:10 oznacza pierwszy alarm o 07:10. Kolejne alarmy dzwonią co minutę
 do potwierdzenia tagiem, także po restarcie usługi. Przed zapisaniem zobaczysz
-pierwsze alarmy i odstępy między nimi.
+godziny pierwszych alarmów.
 
 Kolejne wersje wypychasz ze swojego komputera na GitHub, a na serwerze wybierasz
 **System → Pull & deploy**. URL, token, tag, sieci i historia zostają na serwerze.

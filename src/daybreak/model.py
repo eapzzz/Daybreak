@@ -32,9 +32,6 @@ class Settings:
     timezone: str = 'Europe/Warsaw'
     alarm_package: str = 'com.google.android.deskclock'
     weekly: dict[str,str|None] = field(default_factory=lambda:{d:'05:55' for d in DAYS})
-    dense_minutes: int = 15
-    dense_step: int = 1
-    sparse_minutes: int = 3
     lead_seconds: int = 10
     evening_enabled: bool = True
     evening_time: str = '22:00'
@@ -53,8 +50,9 @@ class Settings:
 
     @classmethod
     def from_dict(cls, raw: dict) -> Settings:
-        # Older installations and backups include the former end-of-session settings.
-        raw={k:v for k,v in raw.items() if k not in ('minimum_minutes','round_minutes','restore_minutes')}
+        # Older installations and backups include duration and phase settings.
+        obsolete=('minimum_minutes','round_minutes','restore_minutes','dense_minutes','dense_step','sparse_minutes')
+        raw={k:v for k,v in raw.items() if k not in obsolete}
         allowed={f.name for f in fields(cls)}
         if set(raw)-allowed: raise ValueError('Unrecognized settings: '+', '.join(sorted(set(raw)-allowed)))
         s=cls(**raw); validate(s); return s
@@ -85,8 +83,7 @@ def validate(s: Settings) -> None:
     if not isinstance(s.weekly,dict) or set(s.weekly)!=set(DAYS): raise ValueError('Weekly routine must contain all seven weekdays.')
     for v in s.weekly.values():
         if v is not None: minutes(v)
-    limits={'dense_minutes':(0,120),'dense_step':(1,30),
-            'sparse_minutes':(1,60),'lead_seconds':(1,45),
+    limits={'lead_seconds':(1,45),
             'loud_alarm':(0,100),'loud_ring':(0,100),'normal_alarm':(0,100),'normal_ring':(0,100),
             'heartbeat_max_minutes':(1,1440),'refresh_seconds':(30,3600),'poll_seconds':(5,120)}
     for k,(lo,hi) in limits.items():
@@ -119,14 +116,6 @@ def valid_local(day: date, hhmm: str, tz: ZoneInfo) -> datetime:
 
 
 @dataclass(frozen=True)
-class Cadence:
-    dense_minutes: int
-    dense_step: int
-    sparse_minutes: int
-    timezone: str
-
-
-@dataclass(frozen=True)
 class Plan:
     day: str
     start: datetime
@@ -135,36 +124,27 @@ class Plan:
     rings: tuple[datetime,...]
     lead: int
     source: str
-    cadence: Cadence|None = None
+    repeat_timezone: str|None = None
 
     def next_ring(self, after: float) -> datetime|None:
-        if self.cadence is None:
+        if self.repeat_timezone is None:
             return next((ring for ring in self.rings if ring.timestamp()>after),None)
-        c=self.cadence
         start=self.start.timestamp()
         minute=max(0,floor((after-start)/60)+1)
-        dense=((minute+c.dense_step-1)//c.dense_step)*c.dense_step
-        if dense<=c.dense_minutes:
-            offset=dense
-        else:
-            later=max(1,(minute-c.dense_minutes+c.sparse_minutes-1)//c.sparse_minutes)
-            offset=c.dense_minutes+later*c.sparse_minutes
-        return datetime.fromtimestamp(start+offset*60,ZoneInfo(c.timezone))
+        return datetime.fromtimestamp(start+minute*60,ZoneInfo(self.repeat_timezone))
 
     def public(self) -> dict:
         rings=self.rings
-        if self.cadence:
-            preview=[self.start]
-            for _ in range(8):
-                preview.append(self.next_ring(preview[-1].timestamp()))
-            rings=preview
+        if self.repeat_timezone:
+            tz=ZoneInfo(self.repeat_timezone)
+            rings=tuple(datetime.fromtimestamp(self.start.timestamp()+m*60,tz) for m in range(9))
         result={'date':self.day,'start':self.start.isoformat(),'end':self.end.isoformat() if self.end else None,
                 'restore':self.restore.isoformat() if self.restore else None,'source':self.source,
-                'count':None if self.cadence else len(rings),
+                'count':None if self.repeat_timezone else len(rings),
                 'alarms':[{'ring':t.isoformat(),
                            'prepare':datetime.fromtimestamp(t.timestamp()-self.lead,t.tzinfo).isoformat()} for t in rings]}
-        if self.cadence:
-            result.update(cadence=asdict(self.cadence),lead_seconds=self.lead)
+        if self.repeat_timezone:
+            result.update(repeat_timezone=self.repeat_timezone,lead_seconds=self.lead)
         return result
 
     @property
@@ -178,8 +158,7 @@ def plan_for(s:Settings, day:date, override:dict|None=None) -> Plan|None:
         hhmm=override.get('start'); source='One-time override'
     if hhmm is None: return None
     start=valid_local(day,hhmm,s.tz)
-    cadence=Cadence(s.dense_minutes,s.dense_step,s.sparse_minutes,s.timezone)
-    return Plan(day.isoformat(),start,None,None,(),s.lead_seconds,source,cadence)
+    return Plan(day.isoformat(),start,None,None,(),s.lead_seconds,source,s.timezone)
 
 
 def upcoming(s:Settings, now:datetime, override:dict|None=None, count:int=7) -> list[Plan]:

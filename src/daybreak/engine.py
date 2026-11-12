@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime, date, timedelta
 import uuid
 from typing import Callable
-from .model import Cadence, Settings, Plan, upcoming, plan_for, network_status, valid_local, parse_timestamp
+from .model import Settings, Plan, upcoming, plan_for, network_status, valid_local, parse_timestamp
 from .store import Store, SettingsFiles
 from .ha import HomeAssistant, HAError, alarm_payload, dismiss_payload, command
 
@@ -13,8 +13,9 @@ DISPATCH_MARGIN=.05
 
 def read_plan(raw:dict) -> Plan:
     start=datetime.fromisoformat(raw['start'])
-    if 'cadence' in raw:
-        return Plan(raw['date'],start,None,None,(),raw['lead_seconds'],raw['source'],Cadence(**raw['cadence']))
+    repeat_timezone=raw.get('repeat_timezone') or raw.get('cadence',{}).get('timezone')
+    if repeat_timezone:
+        return Plan(raw['date'],start,None,None,(),raw['lead_seconds'],raw['source'],repeat_timezone)
     first=raw['alarms'][0]
     lead=int(datetime.fromisoformat(first['ring']).timestamp()-datetime.fromisoformat(first['prepare']).timestamp())
     return Plan(raw['date'],start,parse_timestamp(raw['end']),parse_timestamp(raw['restore']),
@@ -49,9 +50,7 @@ class Engine:
             start=datetime.fromisoformat(row['plan']['start'])
             if restore and start.timestamp()-self.cfg.lead_seconds<=now and (now<restore.timestamp() or row['needs_normal']):
                 old=read_plan(row['plan'])
-                cfg=self.cfg
-                cadence=Cadence(cfg.dense_minutes,cfg.dense_step,cfg.sparse_minutes,cfg.timezone)
-                rolling=Plan(old.day,old.start,None,None,(),old.lead,old.source,cadence)
+                rolling=Plan(old.day,old.start,None,None,(),old.lead,old.source,self.cfg.timezone)
                 self.db.start_wake(row['id'],rolling.public())
                 return
 

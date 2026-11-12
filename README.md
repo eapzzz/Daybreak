@@ -12,7 +12,7 @@ Assistant automation. Your normal Home Assistant controls remain separate.
 ## What it does
 
 - Exact first-ring times. No hidden five-minute offset.
-- Alarms repeat until tag confirmation, with an initial phase and a configurable later interval.
+- Alarms repeat every minute until tag confirmation.
 - Alarm creation and loud-volume commands begin **the configured preparation lead before each ring**.
 - **Home Wi-Fi only:** both the reported SSID and BSSID must match your approved
   networks. Away/Unknown inhibit new wake-up commands and queue cleanup.
@@ -165,8 +165,7 @@ Default settings:
 | Setting | Default |
 |---|---|
 | Weekly first alarm | 05:55, every day |
-| Dense phase | First 15 minutes, every minute |
-| Later phase | Every 3 minutes |
+| Repeat interval | Every minute until tag confirmation |
 | Preparation lead | 10 seconds |
 | Daytime volume restored | After tag confirmation |
 | Evening preparation | 22:00, one alarm at the next day's exact first-ring time |
@@ -183,14 +182,13 @@ late. A live one-second test rolled an alarm to the following day when Clock pro
 it too late, so the fresh-install default remains 10 seconds. Shorter values need
 a real phone test before relying on them.
 
-The first ring is at the entered time. With the defaults, the initial phase
-includes the first ring and the ring at +15 minutes. The later phase starts
-at +18 minutes and repeats until tag confirmation. The intervals are editable.
+The first ring is at the entered time. Daybreak schedules the next alarm every
+minute until tag confirmation.
 An unfinished wake-up remains active across midnight. If a later day's start
 passes while it is active, both dates are covered by the same confirmation.
 
 **F2 · Next wake-up** changes one explicit date. Its preview shows the first
-nine preparation and ring times plus the repeat cadence. **F3 · Routine** edits
+nine preparation and ring times. **F3 · Routine** edits
 the default weekdays. A blank weekday leaves that day unscheduled. Overview
 shows whether a wake-up is waiting for its tag and when the next alarm is due.
 
@@ -251,7 +249,7 @@ allows future alarms after pending cleanup. Expired alarm times are skipped.
 |---|---|
 | Overview | Next session, service/network readiness, coming-up list, shortcuts |
 | Next wake-up | Date/time, live timeline, one-date override and routine reset |
-| Routine | All weekdays, initial phase, repeat intervals, preparation lead, evening seed |
+| Routine | All weekdays, preparation lead, evening seed |
 | Connection | URL, masked token, notification picker, clock package, timezone, NFC tag pairing |
 | Home Wi-Fi | Sensor pickers, SSID/BSSID lists, current-network capture, polling/refresh |
 | Sound | Four volume levels and live test |

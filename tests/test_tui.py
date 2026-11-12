@@ -39,7 +39,7 @@ async def test_every_page_renders(page,title):
 async def test_next_preview_shows_confirmation_in_actual_console():
     async with console() as (c,p):
         c.next_date.text='2026-09-17'; c.next_time.text='07:10'; c.goto('next'); await asyncio.sleep(.1)
-        text=screen_text(c); assert '07:10' in text and 'until tag confirmation' in text
+        text=screen_text(c); assert '07:10' in text and 'Every minute until tag confirmation' in text
 
 async def test_overview_shows_an_active_wake_waiting_for_tag():
     async with console() as (c,p):
