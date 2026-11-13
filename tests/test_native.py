@@ -30,7 +30,7 @@ async def confirm_android_trial(engine):
     e.native.start_trial()
     await e.tick()
     trial=e.native.trial()
-    c.now+=timedelta(seconds=23)
+    c.now+=timedelta(seconds=43)
     await qr(e)
     assert e.db.session('wake:'+c.now.date().isoformat()) is None
     assert e.native.public()['trial_result']=='Tag'
@@ -60,10 +60,10 @@ async def test_paired_app_takes_over_wake_and_stops_on_existing_tag(engine):
     first=tomorrow.replace(hour=5,minute=55,second=0)
     assert int(real[3])==int(first.timestamp()*1000)
     status=e.status()
-    assert status['active_wake']['interval_seconds']==10
+    assert status['active_wake']['interval_seconds']==30
     preview=status['plans'][0]['alarms']
-    assert [p['ring'][11:19] for p in preview[:3]]==['05:55:00','05:55:10','05:55:20']
-    assert [p['prepare'][11:19] for p in preview[:3]]==['05:54:58','05:55:08','05:55:18']
+    assert [p['ring'][11:19] for p in preview[:3]]==['05:55:00','05:55:30','05:56:00']
+    assert [p['prepare'][11:19] for p in preview[:3]]==['05:54:58','05:55:28','05:55:58']
     c.now+=timedelta(seconds=26)
     await e.tick()
     assert messages(h,key)[-1][3]==real[3]
@@ -96,3 +96,19 @@ async def test_native_wake_stops_when_away_and_resumes_without_resetting_anchor(
     issued=[int(m[4]) for m in messages(h,key)]
     assert issued==sorted(set(issued))
     assert not creates(h)
+
+
+async def test_android_trial_rejects_tag_before_second_ring(engine):
+    e,c,h=engine
+    e.native.pairing_key()
+    c.now=c.now.replace(hour=14)
+    e.native.start_trial()
+    await e.tick()
+    c.now+=timedelta(seconds=23)
+    await qr(e)
+    assert e.native.public()['trial_result']=='Tag scanned before second ring'
+    for _ in range(3):
+        await e.tick()
+        c.now+=timedelta(seconds=2)
+    with pytest.raises(ValueError,match='Android link test'):
+        e.native.set_enabled(True)

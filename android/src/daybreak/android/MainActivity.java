@@ -84,13 +84,13 @@ public final class MainActivity extends Activity {
             key.setText("");
             updateStatus();
         });
-        button(page, "Run 30-second phone test", () -> {
+        button(page, "Run 60-second phone test", () -> {
             if (!schedule.exactAllowed() || !notificationsAllowed() || schedule.active()) {
                 updateStatus();
                 return;
             }
             long start = System.currentTimeMillis() + 5_000;
-            schedule.arm("local-test", start, start + 30_000);
+            schedule.arm("local-test", start, start + 60_000);
             updateStatus();
         });
         button(page, "Stop phone test", () -> {
@@ -118,7 +118,7 @@ public final class MainActivity extends Activity {
     private void updateStatus() {
         boolean fullScreen = Build.VERSION.SDK_INT < 34
                 || getSystemService(NotificationManager.class).canUseFullScreenIntent();
-        status.setText("Alarm every 10 seconds until Daybreak confirms your wake-up."
+        status.setText("Alarm every 30 seconds until Daybreak confirms your wake-up."
                 + "\n\nExact alarms   " + (schedule.exactAllowed() ? "Allowed" : "Permission needed")
                 + "\nNotifications   " + (notificationsAllowed() ? "Allowed" : "Permission needed")
                 + "\nLock-screen alarms   " + (fullScreen ? "Allowed" : "Permission needed")

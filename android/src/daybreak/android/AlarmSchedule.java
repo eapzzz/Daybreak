@@ -13,7 +13,7 @@ final class AlarmSchedule {
     static final String PREPARE = "daybreak.android.PREPARE";
     static final String EXPIRE = "daybreak.android.EXPIRE";
     static final String SILENCE = "daybreak.android.SILENCE";
-    static final long INTERVAL = 10_000;
+    static final long INTERVAL = 30_000;
     static final long LEAD = 2_000;
     static final long LATE_LIMIT = 2_500;
     private static final String TAG = "DaybreakAlarm";

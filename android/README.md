@@ -2,16 +2,16 @@
 
 Install the signed APK and open Daybreak once. Allow exact alarms, notifications
 and full-screen alarms using the buttons on its setup screen. The local phone
-test runs for 30 seconds. It only tests the app itself.
+test runs for 60 seconds. It only tests the app itself.
 
 To enable daily wake-ups, use **Sound** in the server's `daybreak` console.
 
 1. Select **Show pairing key** and save the key in the Android app. Keep it private.
 2. Lock the phone and select **Test Android link** in the server console. The first
-   ring comes about 12 seconds later. Tap **Silence this ring**, let the next one
-   ring, and scan the paired tag. Verify that audio stops and alarm volume returns
-   to its previous level.
-3. Select **Enable 10-second mode** after the test succeeds. The same Home
+   ring comes about 12 seconds later with an 8-second fade-in. Tap **Silence this
+   ring**, let the next one ring 30 seconds after the first, and scan the paired
+   tag. Verify that audio stops and alarm volume returns to its previous level.
+3. Select **Enable 30-second mode** after the test succeeds. The same Home
    Assistant tag and phone pairing still finish the daily wake-up.
 
 The app uses Android's default alarm sound. Android must allow alarms through the

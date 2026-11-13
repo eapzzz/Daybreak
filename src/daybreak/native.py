@@ -12,8 +12,9 @@ from .ha import HAError, command
 if TYPE_CHECKING:
     from .engine import Engine
 
-INTERVAL=10
+INTERVAL=30
 START_LEAD=12
+TRIAL_DURATION_MS=60_000
 LEASE_MS=75_000
 REFRESH_MS=25_000
 STOP_RETRY_MS=2_000
@@ -76,7 +77,7 @@ class NativeAlarms:
         if not e.cfg.ready() or e.network().state!='Home' or self.db.pending_cleanup():
             raise ValueError('The phone must be on home Wi-Fi and previous cleanup must be complete.')
         start=((self.now()+999)//1000+START_LEAD)*1000
-        expires=start+30_000
+        expires=start+TRIAL_DURATION_MS
         if self.db.meta('armed',False) and any(p.start.timestamp()*1000<=expires+START_LEAD*1000 for p in e.plans()):
             raise ValueError('The daily wake-up is due soon. Test the app after it finishes.')
         self.db.set_meta('native_trial',{'sid':'app-test:'+secrets.token_hex(6),'start':start,
@@ -104,8 +105,8 @@ class NativeAlarms:
         if enabled!=self.enabled:
             self.db.set_meta('native_enabled',enabled)
             self.engine._invalidate_future()
-            self.engine.note('Android 10-second mode '+('enabled.' if enabled else 'disabled.'))
-        return {'message':'Android 10-second mode '+('enabled.' if enabled else 'disabled.')}
+            self.engine.note(f'Android {INTERVAL}-second mode '+('enabled.' if enabled else 'disabled.'))
+        return {'message':f'Android {INTERVAL}-second mode '+('enabled.' if enabled else 'disabled.')}
 
     def public(self):
         trial=self.db.meta('native_trial')

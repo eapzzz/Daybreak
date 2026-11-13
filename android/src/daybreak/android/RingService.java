@@ -15,6 +15,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Log;
 
 import java.io.IOException;
@@ -24,6 +25,9 @@ public final class RingService extends Service {
     private static final String RING_CHANNEL = "daybreak-alarm";
     private static final int RUNNING_NOTIFICATION = 1;
     private static final int RING_NOTIFICATION = 2;
+    private static final long FADE_DURATION_MS = 8_000;
+    private static final long FADE_TICK_MS = 50;
+    private static final float FADE_MIN_VOLUME = 0.02f;
     private static RingService current;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -31,6 +35,8 @@ public final class RingService extends Service {
     private NotificationManager notifications;
     private PowerManager.WakeLock preparing;
     private MediaPlayer player;
+    private Runnable pendingRing;
+    private Runnable fadeStep;
     private String session;
 
     @Override
@@ -67,7 +73,7 @@ public final class RingService extends Service {
         long delay = due - System.currentTimeMillis();
         if (delay >= -AlarmSchedule.LATE_LIMIT && delay <= AlarmSchedule.LEAD) {
             schedule.prepareVolume(due);
-            handler.removeCallbacksAndMessages(null);
+            cancelPendingRing();
             preparing.acquire(5_000);
             ringWhenDue(requested, due);
         }
@@ -78,9 +84,14 @@ public final class RingService extends Service {
         long delay = due - System.currentTimeMillis();
         // Handler runs on uptime, while the alarm grid uses wall time.
         if (delay > 0 && delay <= AlarmSchedule.LEAD) {
-            handler.postDelayed(() -> ringWhenDue(requested, due), delay);
+            pendingRing = () -> {
+                pendingRing = null;
+                ringWhenDue(requested, due);
+            };
+            handler.postDelayed(pendingRing, delay);
             return;
         }
+        pendingRing = null;
         try {
             if (schedule.claimRing(requested, due)) play(requested);
         } finally {
@@ -103,7 +114,9 @@ public final class RingService extends Service {
             next.setLooping(true);
             next.setOnPreparedListener(ready -> {
                 if (ready == player && schedule.active(requested)) {
+                    ready.setVolume(FADE_MIN_VOLUME, FADE_MIN_VOLUME);
                     ready.start();
+                    startFadeIn(ready);
                     Log.i("DaybreakAlarm", "Audio playing");
                 }
             });
@@ -116,6 +129,52 @@ public final class RingService extends Service {
         } catch (IOException | RuntimeException error) {
             Log.e("DaybreakAlarm", "Cannot play the selected alarm tone", error);
             releasePlayer();
+        }
+    }
+
+    private static float fadeVolume(float progress) {
+        if (progress >= 1f) return 1f;
+        if (progress <= 0f) return FADE_MIN_VOLUME;
+        return (float) Math.pow(FADE_MIN_VOLUME, 1.0 - progress);
+    }
+
+    private void startFadeIn(MediaPlayer target) {
+        cancelFade();
+        final long startedAt = SystemClock.elapsedRealtime();
+        fadeStep = new Runnable() {
+            @Override
+            public void run() {
+                if (target != player || fadeStep != this) return;
+                float progress = Math.min(1f, Math.max(0f,
+                        (float) (SystemClock.elapsedRealtime() - startedAt) / FADE_DURATION_MS));
+                float volume = fadeVolume(progress);
+                try {
+                    target.setVolume(volume, volume);
+                } catch (IllegalStateException error) {
+                    cancelFade();
+                    return;
+                }
+                if (progress < 1f) {
+                    handler.postDelayed(this, FADE_TICK_MS);
+                } else {
+                    fadeStep = null;
+                }
+            }
+        };
+        handler.postDelayed(fadeStep, FADE_TICK_MS);
+    }
+
+    private void cancelPendingRing() {
+        if (pendingRing != null) {
+            handler.removeCallbacks(pendingRing);
+            pendingRing = null;
+        }
+    }
+
+    private void cancelFade() {
+        if (fadeStep != null) {
+            handler.removeCallbacks(fadeStep);
+            fadeStep = null;
         }
     }
 
@@ -163,7 +222,7 @@ public final class RingService extends Service {
 
     @Override
     public void onDestroy() {
-        handler.removeCallbacksAndMessages(null);
+        cancelPendingRing();
         releasePreparationLock();
         releasePlayer();
         stopForeground(STOP_FOREGROUND_REMOVE);
@@ -172,6 +231,7 @@ public final class RingService extends Service {
     }
 
     private void releasePlayer() {
+        cancelFade();
         if (player != null) {
             player.release();
             player = null;

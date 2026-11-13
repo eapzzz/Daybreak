@@ -106,3 +106,13 @@ async def test_connection_and_diagnostics_show_nfc_controls():
         assert 'captured-nfc' in c._pair_status() and 'captured-phone' in c._pair_status()
         c.status_data['last_tag']='2026-11-06T08:00:00+01:00'
         assert 'Last tag:' in c._diagnostic_card()
+
+
+async def test_sound_page_reflects_30_second_android_mode():
+    async with console() as (c,p):
+        c.status_data['native']={'enabled':True,'paired':True,'testing':False,'trial_result':'Tag','stopping':False}
+        c.goto('sound'); await asyncio.sleep(.1)
+        text=screen_text(c)
+        assert 'ANDROID 30-SECOND MODE' in text
+        assert 'Daybreak app · every 30 seconds' in text
+        assert 'Enable 30-second mode' in text

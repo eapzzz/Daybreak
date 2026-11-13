@@ -21,7 +21,7 @@ from prompt_toolkit.widgets import TextArea,Button,Frame,Label,RadioList,Checkbo
 
 from . import __version__
 from .model import Settings,DAYS,plan_for,upcoming,parse_timestamp
-from .native import INTERVAL
+from .native import INTERVAL, START_LEAD, TRIAL_DURATION_MS
 from . import system
 
 PAGES=[('overview','Overview'),('next','Next wake-up'),('routine','Routine'),('connection','Connection'),
@@ -70,7 +70,7 @@ def plan_text(p:dict|None)->str:
     fast=p.get('interval_seconds')==INTERVAL
     if p.get('repeat_timezone'):
         lines=[f"{p['date']}  ·  First ring {stamp(p['start'])}  ·  {p['source']}",
-               'Every 10 seconds until tag confirmation.' if fast else 'Every minute until tag confirmation.',
+               f'Every {INTERVAL} seconds until tag confirmation.' if fast else 'Every minute until tag confirmation.',
                'Daytime volume returns after confirmation.', '', ' FIRST ALARMS']
     else:
         lines=[f"{p['date']}  ·  {stamp(p['start'])} → {stamp(p['end'])}  ·  {p['count']} alarms",
@@ -212,9 +212,9 @@ class Console:
         pages['sound']=self.page('Sound','Google Clock uses the volume levels below. The Daybreak app uses maximum alarm volume.',
             VSplit(sound_boxes[:2],padding=5),gap(),VSplit(sound_boxes[2:],padding=5),gap(),
             buttons(self.button('Save sound',self.save_sound),self.button('Run full phone test',self.start_test)),gap(),
-            Frame(plain(self._native_card,4),title='ANDROID 10-SECOND MODE'),gap(),
+            Frame(plain(self._native_card,4),title=f'ANDROID {INTERVAL}-SECOND MODE'),gap(),
             buttons(self.button('Show pairing key',self.native_pair),self.button('Test Android link',self.native_test)),gap(),
-            buttons(self.button('Enable 10-second mode',self.native_enable,True),self.button('Use Google Clock',self.native_enable,False)))
+            buttons(self.button(f'Enable {INTERVAL}-second mode',self.native_enable,True),self.button('Use Google Clock',self.native_enable,False)))
         pages['diagnostics']=self.page('Diagnostics','Real tests use a separate session. They do not complete your next morning.',
             buttons(self.button('Check connection',self.check_connection),self.button('Refresh sensors',self.refresh_sensors)),gap(),
             buttons(self.button('Run rolling test',self.start_test),self.button('Run Wi-Fi test',self.start_network_test)),gap(),
@@ -253,14 +253,14 @@ class Console:
                 next_line='  Waiting for home Wi-Fi.'
             return FormattedText([('class:accent','  AWAITING TAG\n'),
                                   ('',f"  Started {wake['date']} at {stamp(wake['start'])}\n{next_line}\n"),
-                                  ('class:muted','  Android app · every 10 seconds' if fast else f"  Alarms tracked: {wake['alarm_count']}")])
+                                  ('class:muted',f'  Android app · every {INTERVAL} seconds' if fast else f"  Alarms tracked: {wake['alarm_count']}")])
         p=next(iter(self.status_data.get('plans',[])),None)
         if not p: return '  No scheduled morning.\n  Configure Routine or Next wake-up.'
         now=parse_timestamp(self.status_data.get('now'))
         start=parse_timestamp(p['start']); secs=max(0,int((start-now).total_seconds())) if now and start else 0
         hours,secs=divmod(secs,3600); mins,_=divmod(secs,60)
         return FormattedText([('class:accent',f"  First ring {stamp(p['start'])}\n"),
-                              ('',f"  {p['date']}  ·  {'Every 10 sec' if self._native_interval()==INTERVAL else 'Every minute'} until tag\n"),
+                              ('',f"  {p['date']}  ·  {f'Every {INTERVAL} sec' if self._native_interval()==INTERVAL else 'Every minute'} until tag\n"),
                               ('class:muted',f"  Starts in {hours:02d}h {mins:02d}m\n  {p['source']}")])
     def _status_card(self):
         s=self.status_data; net=s.get('network',{}).get('state','Unknown')
@@ -294,16 +294,16 @@ class Console:
     def _native_interval(self):
         return INTERVAL if self.status_data.get('native',{}).get('enabled') else 60
     def _repeat_text(self):
-        return ('Repeats every 10 seconds until tag confirmation.' if self._native_interval()==INTERVAL
+        return (f'Repeats every {INTERVAL} seconds until tag confirmation.' if self._native_interval()==INTERVAL
                 else 'Repeats every minute until tag confirmation.')
     def _native_card(self):
         state=self.status_data.get('native',{})
-        mode='Daybreak app · every 10 seconds' if state.get('enabled') else 'Google Clock · every minute'
+        mode=f'Daybreak app · every {INTERVAL} seconds' if state.get('enabled') else 'Google Clock · every minute'
         if state.get('testing'): test='In progress. Scan after the second ring.'
         elif state.get('stopping'): test='Tag received. Stop requested.'
         elif state.get('trial_result')=='Tag': test='Tag received. Confirm on the phone before enabling.'
         else: test=state.get('trial_result') or 'Run once with the phone locked.'
-        return f"  Mode   {mode}\n  Link   {test}\n  Android app resets alarm volume and schedules each ring 2 seconds ahead."
+        return f"  Mode   {mode}\n  Link   {test}\n  Android app raises alarm volume, fades in over 8 seconds, and schedules each ring 2 seconds ahead."
     def _pair_status(self):
         s=self.status_data
         if s.get('paired'):
@@ -392,7 +392,7 @@ class Console:
         result=await self.control.action('native_pair')
         await self.show_text('Android pairing key',result['key']+'\n\nEnter this key in the Daybreak Android app. Keep it private.')
     async def native_test(self):
-        if await self.confirm('Test Android link','Lock the paired phone. The first ring is about 12 seconds after Continue.\nSilence that ring, wait for the second, then scan the wake-up tag.\nThe test expires 30 seconds after the first ring.'):
+        if await self.confirm('Test Android link',f'Lock the paired phone. The first ring is about {START_LEAD} seconds after Continue.\nSilence that ring, wait for the second, then scan the wake-up tag.\nThe test expires {TRIAL_DURATION_MS // 1000} seconds after the first ring.'):
             result=await self.control.action('native_test')
             self.toast(f"Android link test starts at {stamp(result['start'],True)}.")
     async def native_enable(self,enabled):
